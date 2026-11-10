@@ -11,8 +11,11 @@ __pycache__/
 *.pyc
 
 # Archivos multimedia generados o descargados (pesados)
+assets_generados/
+PROYECTO_CAPCUT_*/
 *.mp4
 *.mp3
 *.wav
 *.mov
 *.avi
+*.png

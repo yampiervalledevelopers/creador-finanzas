@@ -31,7 +31,10 @@ else:
     if os.path.exists(posible):
         os.environ["IMAGEMAGICK_BINARY"] = posible
 
+import numpy as np
 import PIL.Image
+import PIL.ImageDraw
+import PIL.ImageFont
 if not hasattr(PIL.Image, "ANTIALIAS"):
     PIL.Image.ANTIALIAS = PIL.Image.Resampling.LANCZOS
 
@@ -42,6 +45,8 @@ from moviepy.editor import (
     concatenate_videoclips,
     TextClip,
     CompositeVideoClip,
+    CompositeAudioClip,
+    afx,
 )
 from moviepy.video.fx.all import crop
 
@@ -83,7 +88,13 @@ class OpenAIService:
             model=modelo,
             response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": "Director experto en JSON."},
+                {
+                    "role": "system",
+                    "content": (
+                        "Eres un director creativo y guionista experto en retención viral para YouTube y Shorts "
+                        "del nicho de finanzas, inversiones y geopolítica económica. Respondes siempre en JSON válido."
+                    ),
+                },
                 {"role": "user", "content": prompt},
             ],
         )
@@ -99,39 +110,122 @@ class OpenAIService:
             )
 
     def generar_imagen(self, prompt, nombre_archivo, vertical=True):
-        size = "1024x1792" if vertical else "1792x1024"
-        res = self.client.images.generate(
-            model="gpt-image-1",
-            prompt=prompt,
-            size=size,
-        )
-        image_bytes = base64.b64decode(res.data[0].b64_json)
+        size = "1024x1536" if vertical else "1536x1024"
+        try:
+            res = self.client.images.generate(
+                model="gpt-image-1",
+                prompt=prompt,
+                size=size,
+            )
+            if getattr(res.data[0], "b64_json", None):
+                image_bytes = base64.b64decode(res.data[0].b64_json)
+            else:
+                image_bytes = requests.get(res.data[0].url, timeout=REQUEST_TIMEOUT).content
+        except Exception:
+            size_dalle = "1024x1792" if vertical else "1792x1024"
+            res = self.client.images.generate(
+                model="dall-e-3",
+                prompt=prompt,
+                size=size_dalle,
+                response_format="b64_json",
+            )
+            image_bytes = base64.b64decode(res.data[0].b64_json)
+
         with open(nombre_archivo, "wb") as f:
             f.write(image_bytes)
         return nombre_archivo
 
 
 class ElevenLabsService:
-    VOICE_ID = "pNInz6obpgDQGcFmaJgB"
+    VOCES = {
+        "Adam (Profunda / Narrador)": "pNInz6obpgDQGcFmaJgB",
+        "Antoni (Dinámica / Joven)": "ErXwobaYiN019PkySvjV",
+        "Arnold (Autoridad / Documental)": "VR6AewLTigWG4xSOukaG",
+        "Josh (Cálida / Storytelling)": "TxGEqnHWrfWFTfGW9XjX",
+    }
+    MAX_CHARS_POR_BLOQUE = 3800
 
-    def __init__(self, api_key):
+    def __init__(self, api_key, voice_id=None):
         if not api_key:
             raise ValueError("Falta la API key de ElevenLabs.")
         self.api_key = api_key
+        self.voice_id = voice_id or self.VOCES["Adam (Profunda / Narrador)"]
+
+    @staticmethod
+    def limpiar_guion_para_tts(guion):
+        """Convierte marcadores [PAUSA] en silencios reales SSML y limpia anotaciones de dirección."""
+        texto = re.sub(
+            r"\[\s*PAUSA\s*\]",
+            ' <break time="0.8s" /> ',
+            guion,
+            flags=re.IGNORECASE,
+        )
+        # Elimina indicaciones entre corchetes como [Música], [Tono serio], etc.
+        texto = re.sub(r"\[[^\]]+\]", "", texto)
+        return re.sub(r"\s{2,}", " ", texto).strip()
+
+    @classmethod
+    def dividir_en_bloques(cls, texto):
+        """Divide guiones largos por párrafos u oraciones sin cortar palabras para evitar límites de ElevenLabs."""
+        if len(texto) <= cls.MAX_CHARS_POR_BLOQUE:
+            return [texto]
+
+        bloques = []
+        actual = ""
+        for parrafo in re.split(r"(\n+)", texto):
+            if len(actual) + len(parrafo) <= cls.MAX_CHARS_POR_BLOQUE:
+                actual += parrafo
+            else:
+                if actual.strip():
+                    bloques.append(actual.strip())
+                if len(parrafo) <= cls.MAX_CHARS_POR_BLOQUE:
+                    actual = parrafo
+                else:
+                    oraciones = re.split(r"(?<=[.!?])\s+", parrafo)
+                    actual = ""
+                    for oracion in oraciones:
+                        if len(actual) + len(oracion) + 1 <= cls.MAX_CHARS_POR_BLOQUE:
+                            actual = f"{actual} {oracion}".strip()
+                        else:
+                            if actual:
+                                bloques.append(actual)
+                            actual = oracion
+        if actual.strip():
+            bloques.append(actual.strip())
+        return bloques
 
     def generar_voz(self, guion, ruta_salida):
-        res = requests.post(
-            f"https://api.elevenlabs.io/v1/text-to-speech/{self.VOICE_ID}",
-            json={"text": guion, "model_id": "eleven_multilingual_v2"},
-            headers={
-                "xi-api-key": self.api_key,
-                "Content-Type": "application/json",
-            },
-            timeout=120,
-        )
-        res.raise_for_status()
-        with open(ruta_salida, "wb") as f:
-            f.write(res.content)
+        texto_limpio = self.limpiar_guion_para_tts(guion)
+        bloques = self.dividir_en_bloques(texto_limpio)
+
+        with open(ruta_salida, "wb") as f_out:
+            for idx, bloque in enumerate(bloques):
+                payload = {
+                    "text": bloque,
+                    "model_id": "eleven_multilingual_v2",
+                    "voice_settings": {
+                        "stability": 0.45,
+                        "similarity_boost": 0.80,
+                        "style": 0.25,
+                        "use_speaker_boost": True,
+                    },
+                }
+                if idx > 0:
+                    payload["previous_text"] = bloques[idx - 1][-300:]
+                if idx < len(bloques) - 1:
+                    payload["next_text"] = bloques[idx + 1][:300]
+
+                res = requests.post(
+                    f"https://api.elevenlabs.io/v1/text-to-speech/{self.voice_id}",
+                    json=payload,
+                    headers={
+                        "xi-api-key": self.api_key,
+                        "Content-Type": "application/json",
+                    },
+                    timeout=180,
+                )
+                res.raise_for_status()
+                f_out.write(res.content)
         return ruta_salida
 
 
@@ -148,12 +242,39 @@ class PexelsService:
                 "query": keyword,
                 "per_page": cantidad,
                 "orientation": orientacion,
+                "size": "medium",
             },
             headers={"Authorization": self.api_key},
             timeout=REQUEST_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json().get("videos", [])
+
+    @staticmethod
+    def elegir_mejor_archivo(video_obj, vertical=True):
+        """Selecciona el archivo MP4 más cercano a 1080p/720p en vez de usar video_files[0] al azar."""
+        archivos = [
+            vf for vf in video_obj.get("video_files", [])
+            if vf.get("link") and vf.get("file_type", "video/mp4") == "video/mp4"
+        ]
+        if not archivos:
+            archivos = video_obj.get("video_files", [])
+        if not archivos:
+            return None
+
+        target_altura = 1920 if vertical else 1080
+        target_ancho = 1080 if vertical else 1920
+
+        def puntaje(vf):
+            w = vf.get("width") or 0
+            h = vf.get("height") or 0
+            # Penalizar resoluciones mayores a 1080p (4K muy pesados) o menores a 720p
+            penalizacion_4k = 2000 if max(w, h) > 2000 else 0
+            penalizacion_baja = 1500 if max(w, h) < 720 else 0
+            return abs(w - target_ancho) + abs(h - target_altura) + penalizacion_4k + penalizacion_baja
+
+        mejor = min(archivos, key=puntaje)
+        return mejor.get("link")
 
     @staticmethod
     def descargar(url, ruta_salida):
@@ -286,7 +407,14 @@ class FalVideoService:
 
 
 class VideoRenderer:
-    """Lógica de recorte, conversión de imagen a clip, miniaturas y subtítulos."""
+    """Lógica de recorte, efecto Ken Burns (zoom dinámico), mezcla de música y subtítulos virales Pro."""
+
+    FUENTES_WINDOWS = [
+        r"C:\Windows\Fonts\impact.ttf",
+        r"C:\Windows\Fonts\arialbd.ttf",
+        r"C:\Windows\Fonts\segoeuib.ttf",
+        r"C:\Windows\Fonts\calibrib.ttf",
+    ]
 
     def __init__(self, formato_actual):
         self.formato_actual = formato_actual
@@ -297,9 +425,23 @@ class VideoRenderer:
             return 1080, 1920
         return 1920, 1080
 
+    @classmethod
+    def cargar_fuente(cls, tamano):
+        for ruta in cls.FUENTES_WINDOWS:
+            if os.path.exists(ruta):
+                try:
+                    return PIL.ImageFont.truetype(ruta, tamano)
+                except Exception:
+                    continue
+        return PIL.ImageFont.load_default()
+
     def procesar_recorte_clip(self, ruta_clip, duracion):
         ancho, alto = self.dimensiones
-        clip = VideoFileClip(ruta_clip).without_audio().subclip(0, duracion)
+        clip_orig = VideoFileClip(ruta_clip).without_audio()
+        if clip_orig.duration < duracion:
+            clip = afx.audio_loop(clip_orig, duration=duracion) if False else clip_orig.loop(duration=duracion)
+        else:
+            clip = clip_orig.subclip(0, duracion)
         ratio_obj = ancho / alto
         if (clip.w / clip.h) > ratio_obj:
             clip = clip.resize(height=alto)
@@ -313,21 +455,35 @@ class VideoRenderer:
             y_center=clip.h / 2,
         )
 
-    def convertir_imagen_a_clip(self, ruta_imagen, ruta_video, duracion=4):
+    def convertir_imagen_a_clip(self, ruta_imagen, ruta_video, duracion=4, zoom_max=0.14):
+        """Convierte una imagen estática en un clip de video con efecto Ken Burns (Zoom suave progresivo)."""
         ancho, alto = self.dimensiones
-        clip = ImageClip(ruta_imagen).set_duration(duracion)
+        img_base = PIL.Image.open(ruta_imagen).convert("RGB")
         ratio_obj = ancho / alto
-        if (clip.w / clip.h) > ratio_obj:
-            clip = clip.resize(height=alto)
+        w_orig, h_orig = img_base.size
+
+        if (w_orig / h_orig) > ratio_obj:
+            nuevo_h = int(alto * (1 + zoom_max))
+            nuevo_w = int(w_orig * (nuevo_h / h_orig))
         else:
-            clip = clip.resize(width=ancho)
-        clip = crop(
-            clip,
-            width=ancho,
-            height=alto,
-            x_center=clip.w / 2,
-            y_center=clip.h / 2,
-        )
+            nuevo_w = int(ancho * (1 + zoom_max))
+            nuevo_h = int(h_orig * (nuevo_w / w_orig))
+
+        img_base = img_base.resize((nuevo_w, nuevo_h), PIL.Image.Resampling.LANCZOS)
+
+        def generar_frame_ken_burns(get_frame, t):
+            progreso = min(1.0, max(0.0, t / max(duracion, 0.1)))
+            escala = 1.0 + (zoom_max * progreso)
+            recorte_w = int(nuevo_w / escala)
+            recorte_h = int(nuevo_h / escala)
+            x1 = max(0, (nuevo_w - recorte_w) // 2)
+            y1 = max(0, (nuevo_h - recorte_h) // 2)
+            recortada = img_base.crop((x1, y1, x1 + recorte_w, y1 + recorte_h))
+            final_pil = recortada.resize((ancho, alto), PIL.Image.Resampling.BILINEAR)
+            return np.array(final_pil)
+
+        clip = ImageClip(np.array(img_base.resize((ancho, alto)))).set_duration(duracion)
+        clip = clip.fl(generar_frame_ken_burns)
         clip.write_videofile(
             ruta_video,
             fps=24,
@@ -353,44 +509,127 @@ class VideoRenderer:
             logging.exception("No se pudo generar miniatura de %s", ruta_video)
             return None
 
-    def crear_subtitulos(self, transcript, estilo):
+    def _renderizar_bloque_subtitulo(self, palabras_bloque, idx_activa, color_acento, color_base, stroke_color, stroke_width, fontsize):
+        ancho_video, _ = self.dimensiones
+        ancho_lienzo = int(ancho_video * 0.92)
+        alto_lienzo = int(fontsize * 2.8)
+        img = PIL.Image.new("RGBA", (ancho_lienzo, alto_lienzo), (0, 0, 0, 0))
+        draw = PIL.ImageDraw.Draw(img)
+        fuente = self.cargar_fuente(fontsize)
+
+        textos = [w.word.upper().strip() for w in palabras_bloque if w.word.strip()]
+        if not textos:
+            return None
+
+        espacio = draw.textlength(" ", font=fuente)
+        anchos = [draw.textlength(t, font=fuente) for t in textos]
+        ancho_total = sum(anchos) + espacio * max(0, len(textos) - 1)
+
+        # Si el bloque es más ancho que el lienzo, reducimos fuente proporcionalmente
+        if ancho_total > ancho_lienzo - 40:
+            factor = (ancho_lienzo - 40) / max(ancho_total, 1)
+            fuente = self.cargar_fuente(max(32, int(fontsize * factor)))
+            espacio = draw.textlength(" ", font=fuente)
+            anchos = [draw.textlength(t, font=fuente) for t in textos]
+            ancho_total = sum(anchos) + espacio * max(0, len(textos) - 1)
+
+        x_actual = (ancho_lienzo - ancho_total) / 2
+        y_pos = (alto_lienzo - fontsize) / 2
+
+        for i, palabra in enumerate(textos):
+            es_numero_o_dinero = bool(re.search(r"[\d\$%€]", palabra))
+            color_palabra = color_acento if (i == idx_activa or es_numero_o_dinero) else color_base
+            # Sombra profunda para contraste en cualquier video
+            draw.text(
+                (x_actual + 4, y_pos + 4),
+                palabra,
+                font=fuente,
+                fill=(0, 0, 0, 210),
+                stroke_width=stroke_width,
+                stroke_fill=(0, 0, 0, 210),
+            )
+            draw.text(
+                (x_actual, y_pos),
+                palabra,
+                font=fuente,
+                fill=color_palabra,
+                stroke_width=stroke_width,
+                stroke_fill=stroke_color,
+            )
+            x_actual += anchos[i] + espacio
+
+        return np.array(img)
+
+    def crear_subtitulos(self, transcript, estilo, palabras_por_bloque=3):
+        """
+        Genera subtítulos estilo Hormozi / Viral en bloques cortos de 2-3 palabras,
+        resaltando la palabra activa y números/dinero sin depender de ImageMagick.
+        """
         clips_texto = []
         if "Hormozi" in estilo:
-            color, stroke_color, stroke_width = "yellow", "black", 3
-            fontsize = 80 if self.formato_actual == "SHORT" else 60
+            color_acento, color_base, stroke_color, stroke_width = "#FFD700", "#FFFFFF", "#000000", 5
+            fontsize = 78 if self.formato_actual == "SHORT" else 58
         elif "Clásico" in estilo:
-            color, stroke_color, stroke_width = "white", "black", 2
-            fontsize = 70 if self.formato_actual == "SHORT" else 50
+            color_acento, color_base, stroke_color, stroke_width = "#00E676", "#FFFFFF", "#000000", 4
+            fontsize = 68 if self.formato_actual == "SHORT" else 50
         else:
-            color, stroke_color, stroke_width = "red", "white", 3
-            fontsize = 90 if self.formato_actual == "SHORT" else 70
+            color_acento, color_base, stroke_color, stroke_width = "#FF1744", "#FFFFFF", "#000000", 5
+            fontsize = 82 if self.formato_actual == "SHORT" else 62
 
-        for word_info in transcript.words:
-            texto = word_info.word.upper().strip()
-            if not texto:
-                continue
-            inicio, fin = word_info.start, word_info.end
-            if fin - inicio <= 0:
-                continue
-            try:
-                txt_clip = TextClip(
-                    texto,
-                    fontsize=fontsize,
-                    color=color,
-                    stroke_color=stroke_color,
-                    stroke_width=stroke_width,
-                    font="Arial-Bold",
-                )
-                txt_clip = (
-                    txt_clip.set_position(("center", 0.75))
-                    .set_start(inicio)
-                    .set_end(fin)
-                )
-                clips_texto.append(txt_clip)
-            except Exception:
-                logging.exception("Error creando subtítulo para %s", texto)
-                continue
+        palabras = [w for w in getattr(transcript, "words", []) if getattr(w, "word", "").strip()]
+        if not palabras:
+            return clips_texto
+
+        pos_y = 0.72 if self.formato_actual == "SHORT" else 0.78
+
+        for i in range(0, len(palabras), palabras_por_bloque):
+            bloque = palabras[i : i + palabras_por_bloque]
+            for idx_local, word_info in enumerate(bloque):
+                inicio = word_info.start
+                fin = bloque[idx_local + 1].start if idx_local + 1 < len(bloque) else word_info.end
+                if fin - inicio <= 0.02:
+                    fin = inicio + 0.15
+                try:
+                    rgba_array = self._renderizar_bloque_subtitulo(
+                        bloque,
+                        idx_local,
+                        color_acento,
+                        color_base,
+                        stroke_color,
+                        stroke_width,
+                        fontsize,
+                    )
+                    if rgba_array is None:
+                        continue
+                    txt_clip = (
+                        ImageClip(rgba_array, transparent=True)
+                        .set_position(("center", pos_y), relative=True)
+                        .set_start(inicio)
+                        .set_end(fin)
+                    )
+                    clips_texto.append(txt_clip)
+                except Exception:
+                    logging.exception("Error creando bloque de subtítulo")
+                    continue
         return clips_texto
+
+    @staticmethod
+    def mezclar_audio_con_musica(audio_voz, ruta_musica, volumen_musica=0.10):
+        """Mezcla la locución con música de fondo en bucle (Auto-Ducking) y fadeout final."""
+        if not ruta_musica or not os.path.exists(ruta_musica):
+            return audio_voz, None
+        try:
+            bgm = AudioFileClip(ruta_musica)
+            if bgm.duration < audio_voz.duration:
+                bgm_loop = afx.audio_loop(bgm, duration=audio_voz.duration)
+            else:
+                bgm_loop = bgm.subclip(0, audio_voz.duration)
+            bgm_loop = bgm_loop.volumex(volumen_musica).audio_fadeout(min(1.5, audio_voz.duration * 0.1))
+            mezcla = CompositeAudioClip([bgm_loop, audio_voz]).set_duration(audio_voz.duration)
+            return mezcla, bgm
+        except Exception:
+            logging.exception("No se pudo mezclar música de fondo")
+            return audio_voz, None
 
 
 # ==========================================
@@ -401,16 +640,20 @@ class StudioApp(ctk.CTk):
     ARCHIVO_KEYS = "config_keys.json"
     ARCHIVO_CACHE = "cache_proyecto.json"
     ARCHIVO_HISTORIAL = "historial_serie.txt"
+    CARPETA_ASSETS = "assets_generados"
 
     def __init__(self):
         super().__init__()
-        self.title("🎬 Studio Automator Pro v13.0 - FAL.AI VIDEO")
-        self.geometry("1300x850")
+        self.title("🎬 Studio Automator Pro v14.0 - AI Scene Sync & Dynamic FX")
+        self.geometry("1340x880")
+        os.makedirs(self.CARPETA_ASSETS, exist_ok=True)
 
         self.keywords_actuales = []
         self.prompts_visuales = []
+        self.escenas_guion = []
         self.pool_videos = []
         self.formato_actual = "SHORT"
+        self.ruta_musica_fondo = ""
 
         self.timeline_data = []
         self.duracion_total_audio = 0
@@ -468,10 +711,18 @@ class StudioApp(ctk.CTk):
         ctk.CTkLabel(frame_izq, text="🧠 Motor de Inteligencia Artificial:").pack(anchor="w", padx=20, pady=(10, 0))
         self.menu_motor_ia = ctk.CTkOptionMenu(
             frame_izq,
-            values=["gpt-4o (Alta Calidad / Largo)", "gpt-3.5-turbo (Rápido / Barato)"],
+            values=["gpt-4o (Alta Calidad / Largo)", "gpt-4o-mini (Rápido / Económico)"],
             width=300, fg_color="#E91E63",
         )
         self.menu_motor_ia.pack(padx=20, pady=5)
+
+        ctk.CTkLabel(frame_izq, text="🎙️ Voz ElevenLabs:").pack(anchor="w", padx=20, pady=(8, 0))
+        self.menu_voz_eleven = ctk.CTkOptionMenu(
+            frame_izq,
+            values=list(ElevenLabsService.VOCES.keys()),
+            width=300, fg_color="#1976D2",
+        )
+        self.menu_voz_eleven.pack(padx=20, pady=5)
 
         # FUENTE VISUAL
         ctk.CTkLabel(
@@ -482,7 +733,7 @@ class StudioApp(ctk.CTk):
             frame_izq,
             values=[
                 "Pexels (Clips reales)",
-                "OpenAI Images (IA)",
+                "OpenAI Images (IA + Zoom Ken Burns)",
                 "Stability Video (IA)",
                 "Runway Video (IA)",
                 "Fal.ai (Kling/Seedance/Luma)",
@@ -519,6 +770,27 @@ class StudioApp(ctk.CTk):
         self.btn_guardar.pack(padx=20, pady=10)
 
         ctk.CTkLabel(
+            frame_izq, text="🎵 Música de Fondo (Auto-Ducking):",
+            font=ctk.CTkFont(size=15, weight="bold"), text_color="#00BCD4",
+        ).pack(anchor="w", padx=20, pady=(10, 2))
+        frame_bgm = ctk.CTkFrame(frame_izq, fg_color="transparent")
+        frame_bgm.pack(fill="x", padx=20, pady=2)
+        self.btn_bgm = ctk.CTkButton(
+            frame_bgm, text="📂 Elegir MP3 Fondo", command=self.seleccionar_musica_fondo,
+            fg_color="#00838F", width=180, height=28,
+        )
+        self.btn_bgm.pack(side="left", padx=(0, 5))
+        ctk.CTkButton(
+            frame_bgm, text="❌", width=36, height=28, fg_color="#555555",
+            command=self.quitar_musica_fondo,
+        ).pack(side="left")
+        self.lbl_bgm = ctk.CTkLabel(frame_izq, text="Sin música de fondo", text_color="gray", font=ctk.CTkFont(size=12))
+        self.lbl_bgm.pack(anchor="w", padx=20)
+        self.slider_vol_bgm = ctk.CTkSlider(frame_izq, from_=0.02, to=0.35, number_of_steps=33, width=300)
+        self.slider_vol_bgm.set(0.10)
+        self.slider_vol_bgm.pack(padx=20, pady=4)
+
+        ctk.CTkLabel(
             frame_izq, text="🔤 Subtítulos (Whisper IA):",
             font=ctk.CTkFont(size=16, weight="bold"), text_color="#E91E63",
         ).pack(anchor="w", padx=20, pady=(15, 5))
@@ -553,6 +825,27 @@ class StudioApp(ctk.CTk):
     # ==========================================
     # MEMORIA (KEYS Y CACHE)
     # ==========================================
+    def seleccionar_musica_fondo(self):
+        archivo = filedialog.askopenfilename(filetypes=[("Audio", "*.mp3 *.wav *.m4a")])
+        if archivo:
+            self.ruta_musica_fondo = archivo
+            self.lbl_bgm.configure(text=f"🎵 {os.path.basename(archivo)}", text_color="#00E676")
+            self.guardar_cache()
+
+    def quitar_musica_fondo(self):
+        self.ruta_musica_fondo = ""
+        self.lbl_bgm.configure(text="Sin música de fondo", text_color="gray")
+        self.guardar_cache()
+
+    def limpiar_pool_clips(self):
+        self.pool_videos = []
+        self.timeline_data = []
+        self.actualizar_lista_clips_ui()
+        for w in self.timeline_ui.winfo_children():
+            w.destroy()
+        self.guardar_cache()
+        self.mostrar_estado("🧹 Pool de clips limpiado para nuevo video.", "yellow")
+
     def guardar_keys(self):
         keys_data = {
             "openai": self.entrada_openai.get().strip(),
@@ -562,6 +855,7 @@ class StudioApp(ctk.CTk):
             "runway": self.entrada_runway.get().strip(),
             "fal": self.entrada_fal.get().strip(),
             "motor_ia": self.menu_motor_ia.get(),
+            "voz_eleven": self.menu_voz_eleven.get(),
             "fuente_visual": self.menu_fuente_visual.get(),
             "modelo_fal": self.menu_modelo_fal.get(),
         }
@@ -593,6 +887,8 @@ class StudioApp(ctk.CTk):
                 self.entrada_fal.insert(0, k["fal"])
             if k.get("motor_ia"):
                 self.menu_motor_ia.set(k["motor_ia"])
+            if k.get("voz_eleven") and k["voz_eleven"] in ElevenLabsService.VOCES:
+                self.menu_voz_eleven.set(k["voz_eleven"])
             if k.get("fuente_visual"):
                 self.menu_fuente_visual.set(k["fuente_visual"])
             if k.get("modelo_fal"):
@@ -609,6 +905,8 @@ class StudioApp(ctk.CTk):
             "videos": self.pool_videos,
             "keywords": self.keywords_actuales,
             "prompts_visuales": self.prompts_visuales,
+            "escenas_guion": self.escenas_guion,
+            "musica_fondo": self.ruta_musica_fondo,
         }
         try:
             with open(self.ARCHIVO_CACHE, "w") as f:
@@ -630,9 +928,13 @@ class StudioApp(ctk.CTk):
                 self.entrada_titulo.insert(0, datos["titulo"])
             if datos.get("desc"):
                 self.caja_desc.insert("0.0", datos["desc"])
-            self.pool_videos = datos.get("videos", [])
+            self.pool_videos = [v for v in datos.get("videos", []) if os.path.exists(v)]
             self.keywords_actuales = datos.get("keywords", [])
             self.prompts_visuales = datos.get("prompts_visuales", [])
+            self.escenas_guion = datos.get("escenas_guion", [])
+            if datos.get("musica_fondo") and os.path.exists(datos["musica_fondo"]):
+                self.ruta_musica_fondo = datos["musica_fondo"]
+                self.lbl_bgm.configure(text=f"🎵 {os.path.basename(self.ruta_musica_fondo)}", text_color="#00E676")
             self.actualizar_lista_clips_ui()
         except Exception:
             logging.exception("Error al cargar cache")
@@ -699,13 +1001,17 @@ class StudioApp(ctk.CTk):
         frame_btn_clips = ctk.CTkFrame(self.tab_clips, fg_color="transparent")
         frame_btn_clips.pack(fill="x", padx=5, pady=5)
         self.btn_auto_clips = ctk.CTkButton(
-            frame_btn_clips, text="🤖 Generar Visuales",
+            frame_btn_clips, text="🤖 Generar Visuales (Sincronizados)",
             command=self.hilo_paso3, fg_color="#9C27B0",
         )
         self.btn_auto_clips.pack(side="left", expand=True, padx=2)
         ctk.CTkButton(
             frame_btn_clips, text="💻 Cargar PC",
             command=self.cargar_desde_pc, fg_color="#FF9800",
+        ).pack(side="left", expand=True, padx=2)
+        ctk.CTkButton(
+            frame_btn_clips, text="🧹 Limpiar Pool",
+            command=self.limpiar_pool_clips, fg_color="#455A64",
         ).pack(side="right", expand=True, padx=2)
 
         # --- PESTAÑA 3 ---
@@ -843,7 +1149,12 @@ class StudioApp(ctk.CTk):
                 self.imagenes_timeline.append(img)
                 ctk.CTkLabel(bloque, image=img, text="").pack(side="left", padx=5, pady=5)
 
-            texto = f"[{item['inicio']:.1f}s - {item['fin']:.1f}s]\n🎥 {os.path.basename(item['archivo'])}"
+            narracion_escena = item.get("narracion", "")
+            subtexto_escena = f"\n🗣️ \"{narracion_escena[:65]}...\"" if narracion_escena else ""
+            texto = (
+                f"Escena #{item['orden']} [{item['inicio']:.1f}s - {item['fin']:.1f}s] "
+                f"({item['duracion']:.1f}s)\n🎥 {os.path.basename(item['archivo'])}{subtexto_escena}"
+            )
             ctk.CTkLabel(bloque, text=texto, justify="left").pack(side="left", padx=10)
 
             frame_controles = ctk.CTkFrame(bloque, fg_color="transparent")
@@ -968,16 +1279,20 @@ REGLAS DE ORO:
 1. IDIOMA: TODO DEBE ESTAR EN ESPAÑOL (excepto las keywords y prompts visuales).
 {reglas_formato}{inyeccion_serie}
 
-(IMPORTANTE: Tu respuesta DEBE ser estrictamente un objeto JSON con 5 llaves:
-- 'guion_locucion': (tu texto en ESPAÑOL aplicando la estructura)
-- 'keywords_visuales': (lista de {num_keywords} conceptos cortos en INGLÉS para buscar en bancos de video)
-- 'prompts_visuales': (lista de {num_keywords} prompts DETALLADOS en INGLÉS para generadores de imágenes/video IA, estilo cinematográfico, sin texto ni marcas de agua)
-- 'titulo_seo': (Un título clickbait para este episodio)
-- 'descripcion_seo': (Descripción corta con hashtags))."""
+(IMPORTANTE: Tu respuesta DEBE ser estrictamente un objeto JSON con estas llaves:
+- 'guion_locucion': (tu texto completo en ESPAÑOL aplicando la estructura)
+- 'escenas': (lista ordenada cronológicamente de {num_keywords} escenas que componen el guion; cada elemento debe ser un objeto con:
+    - 'narracion': el fragmento exacto del guion que se narra en esta escena,
+    - 'keyword_pexels': búsqueda corta de 2-4 palabras en INGLÉS para banco de video stock que represente visualmente esta escena,
+    - 'prompt_ia': prompt cinematográfico detallado en INGLÉS para generar esta escena con IA, sin texto ni marcas de agua)
+- 'keywords_visuales': (lista en el mismo orden de los conceptos en INGLÉS de cada escena)
+- 'prompts_visuales': (lista en el mismo orden de los prompts DETALLADOS en INGLÉS de cada escena)
+- 'titulo_seo': (Un título magnético de alto CTR para este episodio)
+- 'descripcion_seo': (Descripción persuasiva con hashtags))."""
 
         self.after(0, lambda: self.caja_prompt.delete("0.0", "end"))
         self.after(0, lambda: self.caja_prompt.insert("0.0", prompt_base))
-        self.mostrar_estado("✅ Mega-Prompt creado (Modo Serie evaluado).", "yellow")
+        self.mostrar_estado("✅ Mega-Prompt v14 con Sincronización de Escenas creado.", "yellow")
 
     # ==========================================
     # PASO 1b: ENVIAR A OPENAI
@@ -988,16 +1303,32 @@ REGLAS DE ORO:
             self.mostrar_estado("❌ Primero genera el prompt.", "red")
             return
 
-        self.mostrar_estado("Enviando a OpenAI... pensando guion...", "orange")
+        self.mostrar_estado("Enviando a OpenAI... diseñando guion y escenas sincronizadas...", "orange")
         self.cambiar_estado_boton(self.btn_enviar_prompt, "disabled")
         try:
             service = OpenAIService(self.entrada_openai.get().strip())
             modelo = self.menu_motor_ia.get().split()[0]
             datos = service.generar_guion(modelo, prompt_final)
 
+            self.escenas_guion = datos.get("escenas", [])
             self.keywords_actuales = datos.get("keywords_visuales", [])
             self.prompts_visuales = datos.get("prompts_visuales", [])
-            guion_generado = datos.get("guion_locucion", "Hubo un error.")
+
+            if self.escenas_guion:
+                if not self.keywords_actuales:
+                    self.keywords_actuales = [
+                        e.get("keyword_pexels", "") for e in self.escenas_guion if e.get("keyword_pexels")
+                    ]
+                if not self.prompts_visuales:
+                    self.prompts_visuales = [
+                        e.get("prompt_ia", "") for e in self.escenas_guion if e.get("prompt_ia")
+                    ]
+
+            guion_generado = datos.get("guion_locucion", "")
+            if not guion_generado and self.escenas_guion:
+                guion_generado = " ".join(e.get("narracion", "") for e in self.escenas_guion).strip()
+            if not guion_generado:
+                guion_generado = "Hubo un error."
 
             self.after(0, lambda: self.caja_guion.delete("0.0", "end"))
             self.after(0, lambda: self.caja_guion.insert("0.0", guion_generado))
@@ -1013,7 +1344,10 @@ REGLAS DE ORO:
                 f.write(guion_generado)
 
             self.guardar_cache()
-            self.mostrar_estado("✅ Guion generado y guardado en la Memoria de Series.", "green")
+            self.mostrar_estado(
+                f"✅ Guion y {len(self.escenas_guion) or len(self.keywords_actuales)} escenas sincronizadas listas.",
+                "green",
+            )
         except Exception as e:
             logging.exception("Error OpenAI")
             self.mostrar_estado(f"❌ Error OpenAI: {e}", "red")
@@ -1029,10 +1363,11 @@ REGLAS DE ORO:
             self.mostrar_estado("❌ Primero genera o escribe un guion.", "red")
             return
 
-        self.mostrar_estado("Grabando Voz con ElevenLabs...", "yellow")
+        self.mostrar_estado("Grabando Voz con ElevenLabs (con pausas limpias)...", "yellow")
         self.cambiar_estado_boton(self.btn_paso2, "disabled")
         try:
-            service = ElevenLabsService(self.entrada_eleven.get().strip())
+            voice_id = ElevenLabsService.VOCES.get(self.menu_voz_eleven.get())
+            service = ElevenLabsService(self.entrada_eleven.get().strip(), voice_id=voice_id)
             service.generar_voz(guion, self.ARCHIVO_VOZ)
             self.mostrar_estado("✅ Voz guardada con éxito.", "green")
         except requests.HTTPError as e:
@@ -1055,6 +1390,8 @@ REGLAS DE ORO:
 
         self.cambiar_estado_boton(self.btn_auto_clips, "disabled", "Generando...")
         try:
+            # Limpiamos el pool anterior para que el nuevo video quede 100% sincronizado en orden
+            self.pool_videos = []
             if fuente.startswith("Pexels"):
                 self.generar_clips_pexels()
             elif fuente.startswith("OpenAI Images"):
@@ -1073,32 +1410,42 @@ REGLAS DE ORO:
             logging.exception("Error generando visuales")
             self.mostrar_estado(f"❌ Error visuales: {e}", "red")
         finally:
-            self.cambiar_estado_boton(self.btn_auto_clips, "normal", "🤖 Generar Visuales")
+            self.cambiar_estado_boton(self.btn_auto_clips, "normal", "🤖 Generar Visuales (Sincronizados)")
 
     def generar_clips_pexels(self):
-        self.mostrar_estado("Buscando en Pexels...", "yellow")
+        self.mostrar_estado("Buscando clips HD en Pexels en orden de escena...", "yellow")
         service = PexelsService(self.entrada_pexels.get().strip())
         ori = "portrait" if self.es_vertical else "landscape"
-        cantidad = 2 if self.es_vertical else 4
+        cantidad = 1 if self.es_vertical else 2
 
-        for kw in set(self.keywords_actuales):
+        for idx_kw, kw in enumerate(self.keywords_actuales):
             try:
+                self.mostrar_estado(
+                    f"🔎 Pexels escena {idx_kw + 1}/{len(self.keywords_actuales)}: {kw}...",
+                    "yellow",
+                )
                 videos = service.buscar_videos(kw, cantidad, ori)
             except Exception:
                 logging.exception("Error buscando %s en Pexels", kw)
                 continue
             for i, v in enumerate(videos):
-                nombre = f"clip_{limpiar_nombre(kw)}_{i}.mp4"
+                nombre = os.path.join(
+                    self.CARPETA_ASSETS,
+                    f"escena_{idx_kw:02d}_{limpiar_nombre(kw)}_{i}.mp4",
+                )
                 try:
-                    PexelsService.descargar(v["video_files"][0]["link"], nombre)
+                    url_hd = PexelsService.elegir_mejor_archivo(v, vertical=self.es_vertical)
+                    if not url_hd:
+                        continue
+                    PexelsService.descargar(url_hd, nombre)
                     if nombre not in self.pool_videos:
                         self.pool_videos.append(nombre)
                 except Exception:
                     logging.exception("Error descargando clip de Pexels")
-        self.mostrar_estado("✅ Clips de Pexels descargados.", "green")
+        self.mostrar_estado("✅ Clips HD de Pexels descargados en orden narrativo.", "green")
 
     def generar_clips_imagenes_openai(self):
-        self.mostrar_estado("Generando imágenes con IA (OpenAI)...", "yellow")
+        self.mostrar_estado("Generando imágenes con IA + Efecto Ken Burns...", "yellow")
         service = OpenAIService(self.entrada_openai.get().strip())
         renderer = VideoRenderer(self.formato_actual)
         prompts = self.prompts_visuales or self.keywords_actuales
@@ -1108,17 +1455,17 @@ REGLAS DE ORO:
                 f"Cinematic realistic scene about: {prompt}. "
                 f"High detail, dramatic lighting, professional camera, no text, no watermark."
             )
-            ruta_img = f"ai_image_{i}.png"
-            ruta_video = f"ai_clip_{i}.mp4"
+            ruta_img = os.path.join(self.CARPETA_ASSETS, f"ai_image_{i:02d}.png")
+            ruta_video = os.path.join(self.CARPETA_ASSETS, f"ai_clip_{i:02d}.mp4")
             try:
-                self.mostrar_estado(f"🎨 Imagen IA {i + 1}/{len(prompts)}...", "yellow")
+                self.mostrar_estado(f"🎨 Imagen IA {i + 1}/{len(prompts)} (Zoom Dinámico)...", "yellow")
                 service.generar_imagen(prompt_img, ruta_img, vertical=self.es_vertical)
-                renderer.convertir_imagen_a_clip(ruta_img, ruta_video, duracion=4)
+                renderer.convertir_imagen_a_clip(ruta_img, ruta_video, duracion=5)
                 if ruta_video not in self.pool_videos:
                     self.pool_videos.append(ruta_video)
             except Exception:
                 logging.exception("Error generando imagen IA %s", i)
-        self.mostrar_estado("✅ Clips IA (imágenes) generados.", "green")
+        self.mostrar_estado("✅ Clips IA con efecto Ken Burns generados.", "green")
 
     def generar_clips_stability_video(self):
         self.mostrar_estado("Generando video IA (Stability)...", "yellow")
@@ -1131,8 +1478,8 @@ REGLAS DE ORO:
                 f"Cinematic realistic scene about: {prompt}. "
                 f"High detail, dramatic lighting, no text, no watermark."
             )
-            ruta_img = f"ai_base_{i}.png"
-            ruta_video = f"stability_clip_{i}.mp4"
+            ruta_img = os.path.join(self.CARPETA_ASSETS, f"ai_base_{i:02d}.png")
+            ruta_video = os.path.join(self.CARPETA_ASSETS, f"stability_clip_{i:02d}.mp4")
             try:
                 self.mostrar_estado(f"🎬 Video IA {i + 1}/{len(prompts)} (imagen base)...", "yellow")
                 openai_service.generar_imagen(prompt_img, ruta_img, vertical=self.es_vertical)
@@ -1153,8 +1500,8 @@ REGLAS DE ORO:
         prompts = self.prompts_visuales or self.keywords_actuales
 
         for i, prompt in enumerate(prompts):
-            ruta_img = f"ai_base_runway_{i}.png"
-            ruta_video = f"runway_clip_{i}.mp4"
+            ruta_img = os.path.join(self.CARPETA_ASSETS, f"ai_base_runway_{i:02d}.png")
+            ruta_video = os.path.join(self.CARPETA_ASSETS, f"runway_clip_{i:02d}.mp4")
             try:
                 openai_service.generar_imagen(prompt, ruta_img, vertical=self.es_vertical)
                 runway.generar_desde_imagen(ruta_img, prompt, ruta_video)
@@ -1180,7 +1527,7 @@ REGLAS DE ORO:
                 f"Cinematic realistic scene about: {prompt}. "
                 f"Smooth camera movement, dramatic lighting, no text, no watermark."
             )
-            ruta_video = f"fal_{limpiar_nombre(modelo)}_{i}.mp4"
+            ruta_video = os.path.join(self.CARPETA_ASSETS, f"fal_{limpiar_nombre(modelo)}_{i:02d}.mp4")
             try:
                 self.mostrar_estado(f"🎬 Fal.ai {modelo} {i + 1}/{len(prompts)}...", "yellow")
                 _, status_url, response_url = fal.iniciar_generacion(
@@ -1194,44 +1541,65 @@ REGLAS DE ORO:
         self.mostrar_estado(f"✅ Clips de video IA (Fal.ai {modelo}) generados.", "green")
 
     # ==========================================
-    # PASO 3b: STORYBOARD
+    # PASO 3b: STORYBOARD (SINCRONIZADO POR ESCENA)
     # ==========================================
     def ejecutar_generar_timeline(self):
-        self.mostrar_estado("Calculando Línea de Tiempo...", "yellow")
+        self.mostrar_estado("Sincronizando Línea de Tiempo con Escenas del Guion...", "yellow")
         try:
             if not self.pool_videos:
-                raise Exception("No hay clips.")
+                raise Exception("No hay clips cargados o generados.")
             if not os.path.exists(self.ARCHIVO_VOZ):
-                raise Exception("Falta la Voz.")
+                raise Exception("Falta grabar la Voz (Paso 2).")
 
             audio_clip = AudioFileClip(self.ARCHIVO_VOZ)
             self.duracion_total_audio = audio_clip.duration
             audio_clip.close()
 
             self.timeline_data = []
-            mazo_videos = self.pool_videos.copy()
-            random.shuffle(mazo_videos)
+            # Calculamos pesos proporcionales según la cantidad de palabras de cada escena
+            pesos_escenas = []
+            textos_escenas = []
+            if self.escenas_guion:
+                for esc in self.escenas_guion:
+                    txt = esc.get("narracion", "").strip()
+                    palabras = max(3, len(txt.split()))
+                    pesos_escenas.append(palabras)
+                    textos_escenas.append(txt)
 
-            tiempo_act = 0
+            total_palabras = sum(pesos_escenas) if pesos_escenas else 0
+            num_bloques = max(len(self.escenas_guion), len(self.pool_videos))
+
+            tiempo_act = 0.0
             orden = 1
-            while tiempo_act < self.duracion_total_audio:
-                if not mazo_videos:
-                    mazo_videos = self.pool_videos.copy()
-                    random.shuffle(mazo_videos)
-                video_elegido = mazo_videos.pop(0)
-                corte = min(4.0, self.duracion_total_audio - tiempo_act)
+            idx_clip = 0
+
+            while tiempo_act < self.duracion_total_audio - 0.05:
+                video_elegido = self.pool_videos[idx_clip % len(self.pool_videos)]
+                narracion_asociada = ""
+
+                if pesos_escenas and idx_clip < len(pesos_escenas) and total_palabras > 0:
+                    proporcion = pesos_escenas[idx_clip] / total_palabras
+                    duracion_objetivo = max(2.2, min(6.0, self.duracion_total_audio * proporcion))
+                    narracion_asociada = textos_escenas[idx_clip]
+                else:
+                    duracion_objetivo = max(2.5, min(4.5, self.duracion_total_audio / max(1, num_bloques)))
+
+                corte = min(duracion_objetivo, self.duracion_total_audio - tiempo_act)
                 clip_b = VideoFileClip(video_elegido)
-                duracion_real = min(corte, clip_b.duration)
+                duracion_real = min(corte, max(1.5, clip_b.duration))
                 clip_b.close()
+
                 self.timeline_data.append({
                     "orden": orden,
                     "archivo": video_elegido,
                     "inicio": tiempo_act,
                     "fin": tiempo_act + duracion_real,
                     "duracion": duracion_real,
+                    "narracion": narracion_asociada,
                 })
                 tiempo_act += duracion_real
                 orden += 1
+                idx_clip += 1
 
             self.after(0, self.dibujar_timeline_ui)
             self.after(0, lambda: self.pestanas.set("🎞️ 3. Storyboard (Timeline)"))
@@ -1255,6 +1623,7 @@ REGLAS DE ORO:
         renderer = VideoRenderer(self.formato_actual)
         clips_finales = []
         audio_clip = None
+        bgm_clip = None
         video_final = None
         try:
             clips_finales = [
@@ -1262,11 +1631,16 @@ REGLAS DE ORO:
                 for i in self.timeline_data
             ]
             audio_clip = AudioFileClip(self.ARCHIVO_VOZ)
-            video_final = concatenate_videoclips(clips_finales, method="compose").set_audio(audio_clip)
+            audio_mezclado, bgm_clip = renderer.mezclar_audio_con_musica(
+                audio_clip,
+                self.ruta_musica_fondo,
+                volumen_musica=float(self.slider_vol_bgm.get()),
+            )
+            video_final = concatenate_videoclips(clips_finales, method="compose").set_audio(audio_mezclado)
 
             if self.switch_subs.get() == 1:
                 service = OpenAIService(self.entrada_openai.get().strip())
-                self.mostrar_estado("🎧 Whisper IA escuchando...", "orange")
+                self.mostrar_estado("🎧 Whisper IA sincronizando subtítulos virales...", "orange")
                 transcript = service.transcribir(self.ARCHIVO_VOZ)
                 clips_de_texto = renderer.crear_subtitulos(transcript, self.menu_estilos_subs.get())
                 if clips_de_texto:
@@ -1276,7 +1650,7 @@ REGLAS DE ORO:
             video_final.write_videofile(
                 ruta_salida, fps=24, codec="libx264", audio_codec="aac", logger=None
             )
-            self.mostrar_estado("🎉 ¡MP4 LISTO!", "#00FF00")
+            self.mostrar_estado("🎉 ¡MP4 FINAL CON SUBTÍTULOS Y AUDIO LISTO!", "#00FF00")
 
             self.cargar_video_proyecto()
             self.after(0, lambda: self.pestanas.set("🚀 4. Publicador"))
@@ -1287,6 +1661,11 @@ REGLAS DE ORO:
             for clip in clips_finales:
                 try:
                     clip.close()
+                except Exception:
+                    pass
+            if bgm_clip:
+                try:
+                    bgm_clip.close()
                 except Exception:
                     pass
             if audio_clip:
