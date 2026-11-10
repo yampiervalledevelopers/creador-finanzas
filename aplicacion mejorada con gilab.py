@@ -70,6 +70,169 @@ REQUEST_TIMEOUT = 60
 
 
 # ==========================================
+# MOTOR MULTIGÉNERO (CUALQUIER NICHO VIRAL)
+# ==========================================
+GENEROS_CANAL = {
+    "💰 Finanzas, Negocios y Geopolítica": {
+        "rol_guionista": (
+            "Eres un director creativo y guionista experto en retención viral para YouTube y Shorts "
+            "del nicho de finanzas, negocios, inversiones y geopolítica económica."
+        ),
+        "instruccion_tono": "Tono revelador, urgente, analítico y magnético, como revelando un secreto financiero multimillonario.",
+        "cierre_estructura": "Cierra SIEMPRE con un DATO REAL verificable, cifra histórica o reflexión financiera de alto impacto.",
+        "estilo_visual_ia": (
+            "Cinematic hyperrealistic documentary scene, dramatic financial thriller lighting, "
+            "8k resolution, photorealistic, Arri Alexa 35mm."
+        ),
+        "youtube_category_id": "27",
+    },
+    "✂️ Clipping Viral / Remix de Tendencias": {
+        "rol_guionista": (
+            "Eres un experto en Clipping Viral, curaduría de momentos de alto impacto, podcasts, polémicas "
+            "y re-edición dinámica estilo TikTok/Reels/Shorts con retención del 100%."
+        ),
+        "instruccion_tono": "Ritmo ultra rápido, directo al grano en el primer segundo, lenguaje juvenil y magnético sin relleno.",
+        "cierre_estructura": "Cierra con una pregunta polémica abierta que obligue a la audiencia a debatir en los comentarios.",
+        "estilo_visual_ia": (
+            "High-energy viral social media visual, ultra-sharp modern studio lighting, dynamic contrast, "
+            "hyperrealistic 8k, eye-catching composition."
+        ),
+        "youtube_category_id": "24",
+    },
+    "👻 Terror, Misterio y Creepypasta (Oscuro / Suspenso)": {
+        "rol_guionista": (
+            "Eres un maestro del terror psicológico, misterios sin resolver, casos paranormales y creepypastas "
+            "inmersivos al estilo de DrossRotzank y canales de horror cinematográfico."
+        ),
+        "instruccion_tono": "Atmósfera inquietante, misteriosa, inmersiva y escalofriante. Usa pausas [PAUSA] para crear tensión.",
+        "cierre_estructura": "Cierra con un giro perturbador (plot twist), un detalle escalofriante real o una advertencia final.",
+        "estilo_visual_ia": (
+            "Dark cinematic horror atmosphere, eerie volumetric fog, unsettling shadows, "
+            "moonlight and flickering dim light, creepy hyperrealistic 8k, A24 horror film aesthetic."
+        ),
+        "youtube_category_id": "24",
+    },
+    "🧸 Animación 3D Estilo Pixar / Disney": {
+        "rol_guionista": (
+            "Eres un director creativo y narrador de historias emotivas, carismáticas y visualmente mágicas "
+            "al estilo de Pixar Animation Studios y Disney."
+        ),
+        "instruccion_tono": "Narrativa emotiva, expresiva, cinematográfica y entrañable que conecta con todas las edades.",
+        "cierre_estructura": "Cierra con un mensaje memorable, emotivo o inspirador que deje huella en el espectador.",
+        "estilo_visual_ia": (
+            "3D Pixar and Disney animation style, cute expressive characters, Unreal Engine 5 render, "
+            "Octane render, vibrant warm subsurface scattering lighting, rich textures, 8k."
+        ),
+        "youtube_category_id": "1",
+    },
+    "🌈 Infantil, Cuentos y Fábulas Educativas": {
+        "rol_guionista": (
+            "Eres un escritor especializado en cuentos infantiles mágicos, fábulas con moraleja y curiosidades "
+            "educativas súper divertidas para niños y familias."
+        ),
+        "instruccion_tono": "Alegre, entusiasta, claro, mágico, lleno de asombro, onomatopeyas suaves y vocabulario apto para niños.",
+        "cierre_estructura": "Cierra con una moraleja positiva, dulce y una pregunta divertida para los niños.",
+        "estilo_visual_ia": (
+            "Whimsical colorful children's storybook 3D illustration, magical fairy-tale world, "
+            "adorable friendly characters, bright cheerful lighting, Pixar/DreamWorks kids style, 8k."
+        ),
+        "youtube_category_id": "1",
+    },
+    "🎌 Anime Épico / Manga (Estilo Shonen / Ghibli)": {
+        "rol_guionista": (
+            "Eres un guionista experto en narrativa épica estilo Anime japonés, batallas legendarias, "
+            "filosofía de personajes y mundos fantásticos."
+        ),
+        "instruccion_tono": "Épico, apasionado, dramático y cargado de adrenalina o belleza poética japonesa.",
+        "cierre_estructura": "Cierra con una frase filosófica legendaria digna de un final de episodio de anime.",
+        "estilo_visual_ia": (
+            "Masterpiece Japanese anime cinematography, Makoto Shinkai and Ufotable visual style, "
+            "dramatic anime lighting, vibrant cel-shaded colors, detailed epic background, 8k."
+        ),
+        "youtube_category_id": "1",
+    },
+    "💥 Acción, Ciencia Ficción y Cyberpunk (Hollywood IMAX)": {
+        "rol_guionista": (
+            "Eres un director de blockbusters de Hollywood experto en acción trepidante, futuro distópico, "
+            "ciencia ficción, tecnología militar y supervivencia extrema."
+        ),
+        "instruccion_tono": "Adrenalina pura, ritmo vertiginoso, impacto cinematográfico de tráiler IMAX.",
+        "cierre_estructura": "Cierra con una revelación impactante sobre el futuro o una frase épica de película.",
+        "estilo_visual_ia": (
+            "Hollywood IMAX sci-fi action blockbuster scene, Denis Villeneuve and Christopher Nolan style, "
+            "neon cyberpunk or epic futuristic scale, volumetric explosions and rain, 8k photorealistic."
+        ),
+        "youtube_category_id": "24",
+    },
+    "🏛️ Historia, Mitología e Imperios Antiguos": {
+        "rol_guionista": (
+            "Eres un historiador y narrador épico especializado en civilizaciones antiguas, mitología, "
+            "batallas históricas y secretos prohibidos de la humanidad."
+        ),
+        "instruccion_tono": "Solemne, épico, envolvente y lleno de asombro histórico.",
+        "cierre_estructura": "Cierra conectando el hecho histórico o mito con una lección eterna para el presente.",
+        "estilo_visual_ia": (
+            "Epic historical movie scene, Ridley Scott Gladiator aesthetic, ancient civilization grandeur, "
+            "golden hour torchlight and dust particles, hyperrealistic 8k cinematography."
+        ),
+        "youtube_category_id": "27",
+    },
+    "🕵️ True Crime / Casos Reales e Investigación": {
+        "rol_guionista": (
+            "Eres un periodista de investigación y documentalista experto en True Crime, desapariciones, "
+            "estafas reales y perfiles criminales estilo Netflix."
+        ),
+        "instruccion_tono": "Serio, intrigante, forense, reconstruyendo las pistas minuto a minuto con suspenso.",
+        "cierre_estructura": "Cierra con el veredicto real del caso o el misterio que aún sigue abierto hoy.",
+        "estilo_visual_ia": (
+            "Netflix true crime documentary cinematography, moody neo-noir detective lighting, "
+            "rainy crime scene street, 35mm film grain, hyperrealistic 8k."
+        ),
+        "youtube_category_id": "25",
+    },
+    "🦁 Motivación, Estoicismo y Éxito Personal": {
+        "rol_guionista": (
+            "Eres un mentor de alto rendimiento, filosofía estoica, disciplina inquebrantable y psicología "
+            "del éxito personal."
+        ),
+        "instruccion_tono": "Poderoso, profundo, inspirador, directo al alma y con autoridad moral.",
+        "cierre_estructura": "Cierra con un reto práctico para aplicar hoy mismo y una cita estoica memorable.",
+        "estilo_visual_ia": (
+            "Cinematic stoic aesthetic, dramatic chiaroscuro lighting, marble statues and lone warrior silhouette, "
+            "moody atmospheric mist, 8k ultra-detailed."
+        ),
+        "youtube_category_id": "27",
+    },
+    "😂 Diversión, Curiosidades Virales y Humor": {
+        "rol_guionista": (
+            "Eres un creador viral de entretenimiento, datos locos que parecen falsos pero son reales, "
+            "humor inteligente y cultura de internet."
+        ),
+        "instruccion_tono": "Súper entretenido, chispeante, irónico, ágil y sorprendente cada 3 segundos.",
+        "cierre_estructura": "Cierra con el dato más absurdo o divertido y un remate cómico.",
+        "estilo_visual_ia": (
+            "Vibrant hyper-detailed surreal and fun cinematic scene, bright pop colors, "
+            "expressive dynamic angle, 8k ultra-sharp."
+        ),
+        "youtube_category_id": "24",
+    },
+    "🎮 Gaming, Tecnología y Cultura Pop": {
+        "rol_guionista": (
+            "Eres un creador experto en videojuegos, secretos ocultos (easter eggs), inteligencia artificial, "
+            "gadgets futuristas y cultura geek."
+        ),
+        "instruccion_tono": "Dinámico, apasionado, experto y lleno de referencias que encantan a los gamers.",
+        "cierre_estructura": "Cierra preguntando a la comunidad cuál es su teoría o juego favorito.",
+        "estilo_visual_ia": (
+            "Unreal Engine 5 next-gen gaming cinematic render, RGB neon reflections, "
+            "ray-tracing global illumination, ultra-detailed 8k."
+        ),
+        "youtube_category_id": "20",
+    },
+}
+
+
+# ==========================================
 # UTILIDADES
 # ==========================================
 def limpiar_nombre(texto):
@@ -86,31 +249,65 @@ class OpenAIService:
             raise ValueError("Falta la API key de OpenAI.")
         self.client = OpenAI(api_key=api_key)
 
-    def generar_guion(self, modelo, prompt):
+    def generar_guion(self, modelo, prompt, genero_key=None):
+        info_genero = GENEROS_CANAL.get(
+            genero_key,
+            GENEROS_CANAL["💰 Finanzas, Negocios y Geopolítica"],
+        )
         res = self.client.chat.completions.create(
             model=modelo,
             response_format={"type": "json_object"},
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "Eres un director creativo y guionista experto en retención viral para YouTube y Shorts "
-                        "del nicho de finanzas, inversiones y geopolítica económica. Respondes siempre en JSON válido."
-                    ),
+                    "content": f"{info_genero['rol_guionista']} Respondes siempre en JSON válido.",
                 },
                 {"role": "user", "content": prompt},
             ],
         )
         return json.loads(res.choices[0].message.content)
 
-    def transcribir(self, ruta_audio):
+    def transcribir(self, ruta_audio, con_segmentos=False):
+        granularities = ["segment", "word"] if con_segmentos else ["word"]
         with open(ruta_audio, "rb") as audio_file:
             return self.client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
                 response_format="verbose_json",
-                timestamp_granularities=["word"],
+                timestamp_granularities=granularities,
             )
+
+    def detectar_momentos_virales(self, transcripcion_texto, duracion_total, num_clips=3, dur_min=15, dur_max=45):
+        """
+        Analiza la transcripción con timestamps de un video largo y devuelve los mejores fragmentos virales
+        para hacer Clipping automático.
+        """
+        prompt = f"""Analiza la siguiente transcripción con marcas de tiempo de un video de {duracion_total:.1f} segundos.
+Encuentra los {num_clips} fragmentos MÁS VIRALES, polémicos, emocionantes o con mayor retención para subirlos como Shorts/TikToks/Reels.
+Cada clip debe durar entre {dur_min} y {dur_max} segundos y tener sentido completo por sí mismo.
+
+TRANSCRIPCIÓN CON TIMESTAMPS:
+{transcripcion_texto[:14000]}
+
+Devuelve ESTRICTAMENTE un objeto JSON con la llave "clips", donde cada elemento tenga:
+- "inicio": (número float en segundos donde empieza el clip)
+- "fin": (número float en segundos donde termina el clip)
+- "titulo_seo": (título viral corto con emojis y hashtags para publicar este clip)
+- "gancho_texto": (la primera frase impactante que se dice en el clip)
+- "razon_viral": (breve explicación de por qué este fragmento será viral)
+"""
+        res = self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Eres un editor experto en Clipping Viral para TikTok, YouTube Shorts y Reels. Respondes siempre en JSON válido.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+        )
+        return json.loads(res.choices[0].message.content).get("clips", [])
 
     def generar_imagen(self, prompt, nombre_archivo, vertical=True):
         size = "1024x1536" if vertical else "1536x1024"
@@ -581,7 +778,7 @@ class FalVideoService:
     }
 
     @classmethod
-    def aplicar_camara_higgsfield(cls, prompt_base, opcion_camara, idx_escena=0):
+    def aplicar_camara_higgsfield(cls, prompt_base, opcion_camara, idx_escena=0, estilo_genero=None):
         preset = cls.CAMARAS_HIGGSFIELD.get(opcion_camara)
         if isinstance(preset, list):
             directiva_camara = preset[idx_escena % len(preset)]
@@ -589,10 +786,11 @@ class FalVideoService:
             directiva_camara = preset
         else:
             directiva_camara = cls.CAMARAS_HIGGSFIELD["Automático (Rotar cámaras Higgsfield)"][0]
+        base_visual = estilo_genero or "Cinematic hyperrealistic scene, 8k resolution"
         return (
-            f"Cinematic realistic scene: {prompt_base}. "
+            f"{base_visual}: {prompt_base}. "
             f"Camera direction: {directiva_camara}. "
-            f"Photorealistic, no text, no watermark."
+            f"No text, no watermark."
         )
 
     def __init__(self, api_key):
@@ -671,6 +869,161 @@ class FalVideoService:
             time.sleep(8)
 
         raise TimeoutError("Fal.ai tardó demasiado en generar el video.")
+
+
+class ClippingService:
+    """
+    Módulo de Clipping Viral y Re-edición Inteligente:
+    1. Descarga videos virales de YouTube, Shorts, TikTok, Instagram Reels o X usando yt-dlp.
+    2. Extrae el audio y detecta los momentos más virales con Whisper + OpenAI.
+    3. Recorta clips automáticamente en formato 9:16 o 16:9 con Transformación Anti-Copyright
+       (Espejo Horizontal + Zoom Dinámico 106% + Reencuadre) o los divide en B-Roll para Remix con nueva voz.
+    """
+
+    @staticmethod
+    def asegurar_yt_dlp():
+        try:
+            import yt_dlp  # noqa: F401
+            return True
+        except ImportError:
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "yt-dlp", "--quiet"],
+                check=True,
+                timeout=120,
+            )
+            return True
+
+    @classmethod
+    def descargar_video_url(cls, url, carpeta_destino):
+        """Descarga un video desde YouTube, TikTok, Reels o X en formato MP4 listo para reeditar."""
+        if not url:
+            raise ValueError("Ingresa un enlace (URL) válido de YouTube, TikTok, Instagram o X.")
+        cls.asegurar_yt_dlp()
+        import yt_dlp
+
+        os.makedirs(carpeta_destino, exist_ok=True)
+        timestamp = int(time.time())
+        plantilla_salida = os.path.join(carpeta_destino, f"viral_source_{timestamp}.%(ext)s")
+
+        ydl_opts = {
+            "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best",
+            "outtmpl": plantilla_salida,
+            "merge_output_format": "mp4",
+            "noplaylist": True,
+            "quiet": True,
+            "no_warnings": True,
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            archivo_descargado = ydl.prepare_filename(info)
+            if not os.path.exists(archivo_descargado):
+                base, _ = os.path.splitext(archivo_descargado)
+                if os.path.exists(base + ".mp4"):
+                    archivo_descargado = base + ".mp4"
+            titulo_original = info.get("title", "Video Viral")
+            duracion = info.get("duration", 0)
+            return archivo_descargado, titulo_original, duracion
+
+    @staticmethod
+    def extraer_audio(ruta_video, ruta_audio_salida):
+        clip = VideoFileClip(ruta_video)
+        try:
+            if clip.audio is None:
+                raise ValueError("El video seleccionado no contiene pista de audio.")
+            clip.audio.write_audiofile(ruta_audio_salida, fps=16000, nbytes=2, codec="libmp3lame", logger=None)
+            duracion = clip.duration
+        finally:
+            clip.close()
+        return ruta_audio_salida, duracion
+
+    @staticmethod
+    def formatear_transcripcion_con_timestamps(transcript_obj):
+        segmentos = getattr(transcript_obj, "segments", None)
+        if not segmentos and isinstance(transcript_obj, dict):
+            segmentos = transcript_obj.get("segments", [])
+        lineas = []
+        if segmentos:
+            for seg in segmentos:
+                ini = seg.get("start", 0.0) if isinstance(seg, dict) else getattr(seg, "start", 0.0)
+                fin = seg.get("end", 0.0) if isinstance(seg, dict) else getattr(seg, "end", 0.0)
+                txt = (seg.get("text", "") if isinstance(seg, dict) else getattr(seg, "text", "")).strip()
+                lineas.append(f"[{ini:.1f}s - {fin:.1f}s] {txt}")
+        else:
+            palabras = getattr(transcript_obj, "words", None) or []
+            bloque_actual = []
+            ini_bloque = 0.0
+            for idx, w in enumerate(palabras):
+                palabra = w.get("word", "") if isinstance(w, dict) else getattr(w, "word", "")
+                ini = w.get("start", 0.0) if isinstance(w, dict) else getattr(w, "start", 0.0)
+                fin = w.get("end", 0.0) if isinstance(w, dict) else getattr(w, "end", 0.0)
+                if not bloque_actual:
+                    ini_bloque = ini
+                bloque_actual.append(palabra)
+                if len(bloque_actual) >= 10 or idx == len(palabras) - 1:
+                    lineas.append(f"[{ini_bloque:.1f}s - {fin:.1f}s] {' '.join(bloque_actual)}")
+                    bloque_actual = []
+        return "\n".join(lineas)
+
+    @staticmethod
+    def recortar_y_transformar_clip(
+        ruta_video_origen,
+        inicio,
+        fin,
+        ruta_salida,
+        formato_actual="SHORT",
+        anti_copyright=True,
+        conservar_audio=True,
+    ):
+        """
+        Recorta un subclip, lo adapta a 9:16 o 16:9, y aplica filtros Anti-Copyright
+        (Modo Espejo Horizontal + Zoom 108% + ligero ajuste de velocidad 1.03x opcional)
+        para evitar detección de contenido duplicado al resubir.
+        """
+        from moviepy.video.fx import all as vfx
+
+        clip = VideoFileClip(ruta_video_origen)
+        try:
+            ini_seguro = max(0.0, min(float(inicio), clip.duration - 1.0))
+            fin_seguro = max(ini_seguro + 1.5, min(float(fin), clip.duration))
+            sub = clip.subclip(ini_seguro, fin_seguro)
+
+            if not conservar_audio:
+                sub = sub.without_audio()
+
+            # Aplicar Espejo Horizontal y Zoom extra si anti_copyright está activo
+            if anti_copyright:
+                sub = sub.fx(vfx.mirror_x)
+                sub = sub.fx(vfx.colorx, 1.06)
+
+            ancho_obj, alto_obj = (1080, 1920) if formato_actual == "SHORT" else (1920, 1080)
+            factor_zoom = 1.08 if anti_copyright else 1.0
+
+            ratio_clip = sub.w / sub.h
+            ratio_target = ancho_obj / alto_obj
+            if ratio_clip > ratio_target:
+                sub = sub.resize(height=int(alto_obj * factor_zoom))
+            else:
+                sub = sub.resize(width=int(ancho_obj * factor_zoom))
+
+            sub = sub.crop(
+                x_center=sub.w / 2,
+                y_center=sub.h / 2,
+                width=ancho_obj,
+                height=alto_obj,
+            )
+
+            sub.write_videofile(
+                ruta_salida,
+                fps=24,
+                codec="libx264",
+                audio_codec="aac" if conservar_audio else None,
+                logger=None,
+            )
+            sub.close()
+        finally:
+            clip.close()
+        return ruta_salida
 
 
 class VideoRenderer:
@@ -926,6 +1279,8 @@ class StudioApp(ctk.CTk):
         self.duracion_total_audio = 0
         self.ruta_video_publicar = ""
         self.imagenes_timeline = []
+        self.ruta_video_clipping = ""
+        self.clips_virales_detectados = []
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=2)
@@ -955,6 +1310,18 @@ class StudioApp(ctk.CTk):
     def es_vertical(self):
         return self.formato_actual == "SHORT"
 
+    @property
+    def info_genero_actual(self):
+        genero_key = self.menu_genero.get() if hasattr(self, "menu_genero") else ""
+        return GENEROS_CANAL.get(
+            genero_key,
+            GENEROS_CANAL["💰 Finanzas, Negocios y Geopolítica"],
+        )
+
+    @property
+    def estilo_visual_genero_actual(self):
+        return self.info_genero_actual["estilo_visual_ia"]
+
     # ==========================================
     # PANEL IZQUIERDO
     # ==========================================
@@ -974,6 +1341,18 @@ class StudioApp(ctk.CTk):
             frame_izq, values=["SHORT (Vertical)", "LARGO (Horizontal)"], width=300
         )
         self.menu_formato.pack(padx=20, pady=5)
+
+        ctk.CTkLabel(
+            frame_izq, text="🎭 Género / Nicho del Canal:",
+            font=ctk.CTkFont(size=15, weight="bold"), text_color="#FFAB00",
+        ).pack(anchor="w", padx=20, pady=(10, 0))
+        self.menu_genero = ctk.CTkOptionMenu(
+            frame_izq,
+            values=list(GENEROS_CANAL.keys()),
+            width=300,
+            fg_color="#E65100",
+        )
+        self.menu_genero.pack(padx=20, pady=5)
 
         ctk.CTkLabel(frame_izq, text="🧠 Motor de Inteligencia Artificial:").pack(anchor="w", padx=20, pady=(10, 0))
         self.menu_motor_ia = ctk.CTkOptionMenu(
@@ -1182,6 +1561,7 @@ class StudioApp(ctk.CTk):
             "runway": self.entrada_runway.get().strip(),
             "fal": self.entrada_fal.get().strip(),
             "replicate": self.entrada_replicate.get().strip(),
+            "genero_canal": self.menu_genero.get(),
             "motor_ia": self.menu_motor_ia.get(),
             "motor_voz": self.menu_motor_voz.get(),
             "voz_eleven": self.menu_voz_eleven.get(),
@@ -1220,6 +1600,8 @@ class StudioApp(ctk.CTk):
                 self.entrada_fal.insert(0, k["fal"])
             if k.get("replicate"):
                 self.entrada_replicate.insert(0, k["replicate"])
+            if k.get("genero_canal") and k["genero_canal"] in GENEROS_CANAL:
+                self.menu_genero.set(k["genero_canal"])
             if k.get("motor_ia"):
                 self.menu_motor_ia.set(k["motor_ia"])
             if k.get("motor_voz"):
@@ -1300,6 +1682,7 @@ class StudioApp(ctk.CTk):
         self.tab_clips = self.pestanas.add("🎬 2. Gestor Clips")
         self.tab_timeline = self.pestanas.add("🎞️ 3. Storyboard (Timeline)")
         self.tab_publicar = self.pestanas.add("🚀 4. Publicador")
+        self.tab_clipping = self.pestanas.add("✂️ 5. Clipping y Re-edición")
 
         # --- PESTAÑA 1 ---
         frame_titulo_guion = ctk.CTkFrame(self.tab_guion, fg_color="transparent")
@@ -1410,6 +1793,90 @@ class StudioApp(ctk.CTk):
             font=ctk.CTkFont(weight="bold", size=15),
         )
         self.btn_publicar_yt.pack(fill="x", padx=10, pady=15)
+
+        # --- PESTAÑA 5: CLIPPING Y RE-EDICIÓN VIRAL ---
+        ctk.CTkLabel(
+            self.tab_clipping,
+            text="✂️ ESTUDIO DE CLIPPING Y RE-EDICIÓN DE VIDEOS VIRALES",
+            font=ctk.CTkFont(size=15, weight="bold"),
+            text_color="#FFAB00",
+        ).pack(anchor="w", padx=10, pady=(6, 2))
+
+        frame_url_clip = ctk.CTkFrame(self.tab_clipping, fg_color="transparent")
+        frame_url_clip.pack(fill="x", padx=10, pady=4)
+        self.entrada_url_viral = ctk.CTkEntry(
+            frame_url_clip,
+            placeholder_text="Pega URL de YouTube, Shorts, TikTok, Instagram Reels o X...",
+        )
+        self.entrada_url_viral.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        self.btn_descargar_viral = ctk.CTkButton(
+            frame_url_clip,
+            text="⬇️ Descargar URL",
+            command=self.hilo_descargar_viral_url,
+            fg_color="#E65100",
+            width=145,
+        )
+        self.btn_descargar_viral.pack(side="left", padx=2)
+        ctk.CTkButton(
+            frame_url_clip,
+            text="📂 Video PC",
+            command=self.cargar_video_clipping_pc,
+            fg_color="#546E7A",
+            width=105,
+        ).pack(side="left", padx=2)
+
+        self.lbl_video_clipping = ctk.CTkLabel(
+            self.tab_clipping,
+            text="Ningún video viral cargado aún.",
+            text_color="gray",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        self.lbl_video_clipping.pack(anchor="w", padx=12, pady=(0, 4))
+
+        frame_opciones_clip = ctk.CTkFrame(self.tab_clipping, fg_color="transparent")
+        frame_opciones_clip.pack(fill="x", padx=10, pady=4)
+        self.switch_anticopyright = ctk.CTkSwitch(
+            frame_opciones_clip,
+            text="🛡️ Anti-Copyright (Espejo Horizontal + Zoom 108% + Color)",
+            progress_color="#00E676",
+        )
+        self.switch_anticopyright.pack(side="left", padx=(0, 10))
+        self.switch_anticopyright.select()
+
+        self.menu_cant_clips = ctk.CTkOptionMenu(
+            frame_opciones_clip,
+            values=[
+                "3 Clips Virales (15s - 40s)",
+                "5 Clips Virales (15s - 40s)",
+                "1 Clip Principal (25s - 55s)",
+            ],
+            width=210,
+            fg_color="#37474F",
+        )
+        self.menu_cant_clips.pack(side="right")
+
+        frame_acciones_clip = ctk.CTkFrame(self.tab_clipping, fg_color="transparent")
+        frame_acciones_clip.pack(fill="x", padx=10, pady=4)
+        self.btn_auto_clipping = ctk.CTkButton(
+            frame_acciones_clip,
+            text="✂️ MODO 1: Extraer Mejores Clips (Voz Original + Subs)",
+            command=self.hilo_auto_clipping,
+            fg_color="#FF6F00",
+            height=34,
+        )
+        self.btn_auto_clipping.pack(side="left", expand=True, fill="x", padx=(0, 4))
+
+        self.btn_remix_completo = ctk.CTkButton(
+            frame_acciones_clip,
+            text="🔄 MODO 2: Re-editar con Tu Voz (Clonar Éxito + Nuevo Guion)",
+            command=self.hilo_remix_completo,
+            fg_color="#8E24AA",
+            height=34,
+        )
+        self.btn_remix_completo.pack(side="right", expand=True, fill="x", padx=(4, 0))
+
+        self.lista_clipping_ui = ctk.CTkScrollableFrame(self.tab_clipping, fg_color="#1a1a1a")
+        self.lista_clipping_ui.pack(fill="both", expand=True, padx=10, pady=6)
 
         # --- BOTONES DE FLUJO ---
         frame_flujo = ctk.CTkFrame(frame_der, fg_color="transparent")
@@ -1575,8 +2042,17 @@ class StudioApp(ctk.CTk):
     def hilo_publicar_youtube(self):
         self.ejecutar_en_hilo(self.ejecutar_publicar_youtube)
 
+    def hilo_descargar_viral_url(self):
+        self.ejecutar_en_hilo(self.ejecutar_descargar_viral_url)
+
+    def hilo_auto_clipping(self):
+        self.ejecutar_en_hilo(self.ejecutar_auto_clipping)
+
+    def hilo_remix_completo(self):
+        self.ejecutar_en_hilo(self.ejecutar_remix_completo)
+
     # ==========================================
-    # PASO 1: PROMPT
+    # PASO 1: PROMPT (MULTIGÉNERO DINÁMICO)
     # ==========================================
     def ejecutar_crear_prompt(self):
         self.after(0, lambda: self.pestanas.set("📝 1. Guion y Prompt"))
@@ -1586,21 +2062,24 @@ class StudioApp(ctk.CTk):
             return
 
         self.formato_actual = "SHORT" if "SHORT" in self.menu_formato.get() else "LARGO"
+        genero_nombre = self.menu_genero.get()
+        info_gen = self.info_genero_actual
 
         if self.es_vertical:
-            reglas_formato = """2. LONGITUD: Escribe un guion explosivo de máximo 90-100 palabras.
-3. ESTRUCTURA (Gancho, Nudo y Desenlace):
-   - GANCHO: Empieza con una afirmación polémica. CERO saludos.
-   - NUDO: Cuenta una mini-historia, usa analogías y mantén la tensión.
-   - DESENLACE: Cierra SIEMPRE con un DATO REAL verificable."""
+            reglas_formato = f"""2. LONGITUD: Escribe un guion explosivo de máximo 90-110 palabras.
+3. TONO DEL GÉNERO ({genero_nombre}): {info_gen['instruccion_tono']}
+4. ESTRUCTURA (Gancho, Nudo y Desenlace):
+   - GANCHO: Empieza en el segundo 0 con un impacto brutal o intriga extrema. CERO saludos.
+   - NUDO: Desarrolla la historia/conflicto con ritmo trepidante y tensión constante.
+   - DESENLACE: {info_gen['cierre_estructura']}"""
             num_keywords = "6 a 10"
         else:
-            reglas_formato = """2. LONGITUD: Escribe un guion MUY EXTENSO de 1600 a 1800 palabras (12 min). Usa [PAUSA] para silencios dramáticos.
-3. TONO: Muy espontáneo y apasionado contándole un secreto a un amigo.
+            reglas_formato = f"""2. LONGITUD: Escribe un guion MUY EXTENSO de 1600 a 1800 palabras (12 min). Usa [PAUSA] para silencios dramáticos.
+3. TONO DEL GÉNERO ({genero_nombre}): {info_gen['instruccion_tono']}
 4. ESTRUCTURA:
-   - GANCHO: Revelación brutal.
-   - NUDO: Explica TODOS los detalles explícitamente. Desarrolla a fondo.
-   - DESENLACE: Cierra con reflexión y un DATO REAL impactante."""
+   - GANCHO: Revelación o escena inicial brutal.
+   - NUDO: Explica TODOS los detalles, atmósfera y giros explícitamente. Desarrolla a fondo.
+   - DESENLACE: {info_gen['cierre_estructura']}"""
             num_keywords = "15 a 20"
 
         inyeccion_serie = ""
@@ -1615,26 +2094,28 @@ class StudioApp(ctk.CTk):
                 f"del episodio anterior y crea un misterio completamente nuevo para este episodio."
             )
 
-        prompt_base = f"""Actúa como un guionista experto en retención para YouTube. Tu tema es: '{tema}'.
+        prompt_base = f"""{info_gen['rol_guionista']}
+Tu tema o idea para este episodio es: '{tema}'.
 
 REGLAS DE ORO:
-1. IDIOMA: TODO DEBE ESTAR EN ESPAÑOL (excepto las keywords y prompts visuales).
-{reglas_formato}{inyeccion_serie}
+1. IDIOMA: TODO el guion, título y descripción DEBEN ESTAR EN ESPAÑOL (excepto las keywords y prompts visuales que van en INGLÉS).
+{reglas_formato}
+5. ESTILO VISUAL IA OBLIGATORIO PARA LAS ESCENAS: Adapta todos los 'prompt_ia' a la estética: "{info_gen['estilo_visual_ia']}"{inyeccion_serie}
 
 (IMPORTANTE: Tu respuesta DEBE ser estrictamente un objeto JSON con estas llaves:
 - 'guion_locucion': (tu texto completo en ESPAÑOL aplicando la estructura)
 - 'escenas': (lista ordenada cronológicamente de {num_keywords} escenas que componen el guion; cada elemento debe ser un objeto con:
     - 'narracion': el fragmento exacto del guion que se narra en esta escena,
     - 'keyword_pexels': búsqueda corta de 2-4 palabras en INGLÉS para banco de video stock que represente visualmente esta escena,
-    - 'prompt_ia': prompt cinematográfico detallado en INGLÉS para generar esta escena con IA, sin texto ni marcas de agua)
+    - 'prompt_ia': prompt cinematográfico detallado en INGLÉS siguiendo el estilo "{info_gen['estilo_visual_ia']}", sin texto ni marcas de agua)
 - 'keywords_visuales': (lista en el mismo orden de los conceptos en INGLÉS de cada escena)
 - 'prompts_visuales': (lista en el mismo orden de los prompts DETALLADOS en INGLÉS de cada escena)
-- 'titulo_seo': (Un título magnético de alto CTR para este episodio)
-- 'descripcion_seo': (Descripción persuasiva con hashtags))."""
+- 'titulo_seo': (Un título magnético de alto CTR acorde al género {genero_nombre})
+- 'descripcion_seo': (Descripción persuasiva con hashtags del nicho))."""
 
         self.after(0, lambda: self.caja_prompt.delete("0.0", "end"))
         self.after(0, lambda: self.caja_prompt.insert("0.0", prompt_base))
-        self.mostrar_estado("✅ Mega-Prompt v14 con Sincronización de Escenas creado.", "yellow")
+        self.mostrar_estado(f"✅ Mega-Prompt creado para el género: {genero_nombre}", "yellow")
 
     # ==========================================
     # PASO 1b: ENVIAR A OPENAI
@@ -1650,7 +2131,7 @@ REGLAS DE ORO:
         try:
             service = OpenAIService(self.entrada_openai.get().strip())
             modelo = self.menu_motor_ia.get().split()[0]
-            datos = service.generar_guion(modelo, prompt_final)
+            datos = service.generar_guion(modelo, prompt_final, genero_key=self.menu_genero.get())
 
             self.escenas_guion = datos.get("escenas", [])
             self.keywords_actuales = datos.get("keywords_visuales", [])
@@ -1918,11 +2399,12 @@ REGLAS DE ORO:
         self.mostrar_estado("Generando escenas IA con Pollinations Flux (100% Gratis)...", "yellow")
         renderer = VideoRenderer(self.formato_actual)
         prompts = self.prompts_visuales or self.keywords_actuales
+        estilo_visual = self.estilo_visual_genero_actual
 
         for i, prompt in enumerate(prompts):
             prompt_img = (
-                f"Cinematic hyperrealistic financial documentary scene: {prompt}. "
-                f"Dramatic lighting, 8k resolution, photorealistic, no text, no watermark."
+                f"{estilo_visual}: {prompt}. "
+                f"No text, no watermark."
             )
             ruta_img = os.path.join(self.CARPETA_ASSETS, f"flux_free_{i:02d}.png")
             ruta_video = os.path.join(self.CARPETA_ASSETS, f"flux_free_clip_{i:02d}.mp4")
@@ -1944,11 +2426,12 @@ REGLAS DE ORO:
         self.mostrar_estado(f"Generando video IA en Replicate ({modelo})...", "yellow")
         replicate = ReplicateVideoService(self.entrada_replicate.get().strip())
         prompts = self.prompts_visuales or self.keywords_actuales
+        estilo_visual = self.estilo_visual_genero_actual
 
         for i, prompt in enumerate(prompts):
             prompt_video = (
-                f"Cinematic realistic scene about: {prompt}. "
-                f"Smooth camera movement, dramatic lighting, no text, no watermark."
+                f"{estilo_visual}: {prompt}. "
+                f"Smooth camera movement, no text, no watermark."
             )
             ruta_video = os.path.join(self.CARPETA_ASSETS, f"replicate_{i:02d}.mp4")
             try:
@@ -1965,11 +2448,12 @@ REGLAS DE ORO:
         service = OpenAIService(self.entrada_openai.get().strip())
         renderer = VideoRenderer(self.formato_actual)
         prompts = self.prompts_visuales or self.keywords_actuales
+        estilo_visual = self.estilo_visual_genero_actual
 
         for i, prompt in enumerate(prompts):
             prompt_img = (
-                f"Cinematic realistic scene about: {prompt}. "
-                f"High detail, dramatic lighting, professional camera, no text, no watermark."
+                f"{estilo_visual}: {prompt}. "
+                f"High detail, no text, no watermark."
             )
             ruta_img = os.path.join(self.CARPETA_ASSETS, f"ai_image_{i:02d}.png")
             ruta_video = os.path.join(self.CARPETA_ASSETS, f"ai_clip_{i:02d}.mp4")
@@ -1988,11 +2472,12 @@ REGLAS DE ORO:
         openai_service = OpenAIService(self.entrada_openai.get().strip())
         stability = StabilityVideoService(self.entrada_stability.get().strip())
         prompts = self.prompts_visuales or self.keywords_actuales
+        estilo_visual = self.estilo_visual_genero_actual
 
         for i, prompt in enumerate(prompts):
             prompt_img = (
-                f"Cinematic realistic scene about: {prompt}. "
-                f"High detail, dramatic lighting, no text, no watermark."
+                f"{estilo_visual}: {prompt}. "
+                f"High detail, no text, no watermark."
             )
             ruta_img = os.path.join(self.CARPETA_ASSETS, f"ai_base_{i:02d}.png")
             ruta_video = os.path.join(self.CARPETA_ASSETS, f"stability_clip_{i:02d}.mp4")
@@ -2035,13 +2520,16 @@ REGLAS DE ORO:
     def generar_clips_fal(self):
         modelo = self.menu_modelo_fal.get()
         estilo_camara = self.menu_camara_higgsfield.get()
+        estilo_visual = self.estilo_visual_genero_actual
         self.mostrar_estado(f"Generando con Fal.ai ({modelo})...", "yellow")
         fal = FalVideoService(self.entrada_fal.get().strip())
         renderer = VideoRenderer(self.formato_actual)
         prompts = self.prompts_visuales or self.keywords_actuales
 
         for i, prompt in enumerate(prompts):
-            prompt_video = FalVideoService.aplicar_camara_higgsfield(prompt, estilo_camara, idx_escena=i)
+            prompt_video = FalVideoService.aplicar_camara_higgsfield(
+                prompt, estilo_camara, idx_escena=i, estilo_genero=estilo_visual
+            )
             ruta_video = os.path.join(self.CARPETA_ASSETS, f"fal_{limpiar_nombre(modelo)}_{i:02d}.mp4")
             try:
                 self.mostrar_estado(f"🎬 Fal.ai {modelo} {i + 1}/{len(prompts)}...", "yellow")
@@ -2071,6 +2559,7 @@ REGLAS DE ORO:
         key_pexels = self.entrada_pexels.get().strip()
         key_pixabay = self.entrada_pixabay.get().strip()
         renderer = VideoRenderer(self.formato_actual)
+        estilo_visual = self.estilo_visual_genero_actual
 
         prompts = self.prompts_visuales or self.keywords_actuales
         keywords = self.keywords_actuales or self.prompts_visuales
@@ -2086,6 +2575,7 @@ REGLAS DE ORO:
                     prompts[0],
                     "Crash Zoom (Impacto Brutal para Ganchos)",
                     idx_escena=0,
+                    estilo_genero=estilo_visual,
                 )
                 ruta_gancho = os.path.join(self.CARPETA_ASSETS, "hibrido_00_GANCHO_KLING3.mp4")
                 self.mostrar_estado("🔥 Generando Gancho (Escena 1) con Kling 3.0 + Cámara Higgsfield...", "orange")
@@ -2146,7 +2636,7 @@ REGLAS DE ORO:
                     ruta_img = os.path.join(self.CARPETA_ASSETS, f"hibrido_{idx:02d}_flux.png")
                     ruta_vid = os.path.join(self.CARPETA_ASSETS, f"hibrido_{idx:02d}_flux.mp4")
                     prompt_cam = FalVideoService.aplicar_camara_higgsfield(
-                        prompt_esc, self.menu_camara_higgsfield.get(), idx_escena=idx
+                        prompt_esc, self.menu_camara_higgsfield.get(), idx_escena=idx, estilo_genero=estilo_visual
                     )
                     PollinationsService.generar_imagen_flux(prompt_cam, ruta_img, vertical=self.es_vertical)
                     renderer.convertir_imagen_a_clip(ruta_img, ruta_vid, duracion=5)
@@ -2382,9 +2872,12 @@ REGLAS DE ORO:
                 "Público": "public",
             }[self.menu_privacidad.get()]
 
+            cat_id = self.info_genero_actual.get("youtube_category_id", "22")
+            es_infantil = "Infantil" in self.menu_genero.get()
+
             body = {
-                "snippet": {"title": titulo, "description": desc, "categoryId": "22"},
-                "status": {"privacyStatus": estado_priv, "selfDeclaredMadeForKids": False},
+                "snippet": {"title": titulo, "description": desc, "categoryId": cat_id},
+                "status": {"privacyStatus": estado_priv, "selfDeclaredMadeForKids": es_infantil},
             }
             self.mostrar_estado("Subiendo video a YouTube... ¡Paciencia, no cierres la app!", "yellow")
 
@@ -2398,6 +2891,364 @@ REGLAS DE ORO:
             self.mostrar_estado(f"❌ Error al Publicar: {e}", "red")
         finally:
             self.cambiar_estado_boton(self.btn_publicar_yt, "normal")
+
+    # ==========================================
+    # PASO 5: CLIPPING VIRAL Y RE-EDICIÓN INTELIGENTE
+    # ==========================================
+    def cargar_video_clipping_pc(self):
+        archivo = filedialog.askopenfilename(filetypes=[("Videos", "*.mp4 *.mov *.mkv *.webm")])
+        if archivo:
+            self.ruta_video_clipping = archivo
+            self.lbl_video_clipping.configure(
+                text=f"✅ Video cargado (PC): {os.path.basename(archivo)}",
+                text_color="#00E676",
+            )
+            self.mostrar_estado(f"📂 Video listo para Clipping o Re-edición: {os.path.basename(archivo)}", "green")
+
+    def ejecutar_descargar_viral_url(self):
+        url = self.entrada_url_viral.get().strip()
+        if not url:
+            self.mostrar_estado("❌ Pega primero el enlace (URL) del video viral.", "red")
+            return
+
+        self.cambiar_estado_boton(self.btn_descargar_viral, "disabled", "Descargando...")
+        try:
+            self.mostrar_estado("⬇️ Descargando video viral con yt-dlp (YouTube/TikTok/Reels/X)...", "yellow")
+            ruta, titulo_orig, dur = ClippingService.descargar_video_url(url, self.CARPETA_ASSETS)
+            self.ruta_video_clipping = ruta
+            self.after(
+                0,
+                lambda: self.lbl_video_clipping.configure(
+                    text=f"✅ Descargado ({dur:.0f}s): {titulo_orig[:55]}",
+                    text_color="#00E676",
+                ),
+            )
+            if not self.entrada_tema.get().strip():
+                self.after(0, lambda: self.entrada_tema.insert(0, titulo_orig[:70]))
+            self.mostrar_estado(f"✅ Video descargado y listo para reeditar: {os.path.basename(ruta)}", "green")
+        except Exception as e:
+            logging.exception("Error descargando URL viral")
+            self.mostrar_estado(f"❌ Error al descargar URL: {e}", "red")
+        finally:
+            self.cambiar_estado_boton(self.btn_descargar_viral, "normal", "⬇️ Descargar URL")
+
+    def ejecutar_auto_clipping(self):
+        """
+        MODO 1 (AUTO-CLIPPING):
+        Extrae el audio del video descargado, transcribe con Whisper con marcas de tiempo,
+        usa OpenAI para elegir los fragmentos más virales, y los recorta en formato 9:16 (o 16:9)
+        con transformación Anti-Copyright opcional.
+        """
+        if not self.ruta_video_clipping or not os.path.exists(self.ruta_video_clipping):
+            self.mostrar_estado("❌ Primero descarga un video por URL o carga uno desde tu PC.", "red")
+            return
+
+        self.formato_actual = "SHORT" if "SHORT" in self.menu_formato.get() else "LARGO"
+        opcion_cant = self.menu_cant_clips.get()
+        if opcion_cant.startswith("5"):
+            num_clips, dur_min, dur_max = 5, 15, 40
+        elif opcion_cant.startswith("1"):
+            num_clips, dur_min, dur_max = 1, 25, 55
+        else:
+            num_clips, dur_min, dur_max = 3, 15, 40
+
+        anti_copy = self.switch_anticopyright.get() == 1
+        self.cambiar_estado_boton(self.btn_auto_clipping, "disabled", "Analizando y Cortando...")
+        try:
+            service = OpenAIService(self.entrada_openai.get().strip())
+            ruta_audio_temp = os.path.join(self.CARPETA_ASSETS, "clipping_source_audio.mp3")
+            self.mostrar_estado("🎧 Extrayendo audio del video viral...", "yellow")
+            _, duracion_total = ClippingService.extraer_audio(self.ruta_video_clipping, ruta_audio_temp)
+
+            self.mostrar_estado("🧠 Transcribiendo timestamps con Whisper IA...", "orange")
+            transcript = service.transcribir(ruta_audio_temp, con_segmentos=True)
+            texto_timestamps = ClippingService.formatear_transcripcion_con_timestamps(transcript)
+
+            self.mostrar_estado(f"🔥 Detectando los {num_clips} momentos más virales con IA...", "orange")
+            momentos = service.detectar_momentos_virales(
+                texto_timestamps, duracion_total, num_clips=num_clips, dur_min=dur_min, dur_max=dur_max
+            )
+            if not momentos:
+                momentos = [{
+                    "inicio": 0.0,
+                    "fin": min(35.0, duracion_total),
+                    "titulo_seo": "Momento Viral Imperdible 🔥 #shorts #viral",
+                    "gancho_texto": "Momento clave del video",
+                    "razon_viral": "Segmento principal de alto impacto",
+                }]
+
+            self.clips_virales_detectados = []
+            for idx, m in enumerate(momentos):
+                ini = float(m.get("inicio", 0.0))
+                fin = float(m.get("fin", min(ini + 30.0, duracion_total)))
+                ruta_clip = os.path.join(self.CARPETA_ASSETS, f"CLIP_VIRAL_{idx + 1:02d}_{int(ini)}s_{int(fin)}s.mp4")
+                self.mostrar_estado(
+                    f"✂️ Recortando Clip Viral #{idx + 1}/{len(momentos)} [{ini:.1f}s - {fin:.1f}s]...",
+                    "yellow",
+                )
+                ClippingService.recortar_y_transformar_clip(
+                    self.ruta_video_clipping,
+                    ini,
+                    fin,
+                    ruta_clip,
+                    formato_actual=self.formato_actual,
+                    anti_copyright=anti_copy,
+                    conservar_audio=True,
+                )
+                m["archivo"] = ruta_clip
+                self.clips_virales_detectados.append(m)
+
+            self.after(0, self.dibujar_clips_virales_ui)
+            self.mostrar_estado(
+                f"🎉 ¡{len(self.clips_virales_detectados)} Clips Virales extraídos y reeditados con éxito!",
+                "#00FF00",
+            )
+        except Exception as e:
+            logging.exception("Error en Auto-Clipping")
+            self.mostrar_estado(f"❌ Error en Auto-Clipping: {e}", "red")
+        finally:
+            self.cambiar_estado_boton(
+                self.btn_auto_clipping,
+                "normal",
+                "✂️ MODO 1: Extraer Mejores Clips (Voz Original + Subs)",
+            )
+
+    def dibujar_clips_virales_ui(self):
+        for w in self.lista_clipping_ui.winfo_children():
+            w.destroy()
+
+        for idx, clip_info in enumerate(self.clips_virales_detectados):
+            card = ctk.CTkFrame(self.lista_clipping_ui, fg_color="#263238", corner_radius=8)
+            card.pack(fill="x", padx=6, pady=5)
+
+            ini = float(clip_info.get("inicio", 0))
+            fin = float(clip_info.get("fin", 0))
+            titulo = clip_info.get("titulo_seo", f"Clip Viral #{idx + 1}")
+            razon = clip_info.get("razon_viral", "")
+            archivo = clip_info.get("archivo", "")
+
+            texto_card = (
+                f"🔥 CLIP #{idx + 1} [{ini:.1f}s - {fin:.1f}s] ({fin - ini:.1f}s) — {titulo}\n"
+                f"💡 Por qué es viral: {razon}\n"
+                f"📁 Archivo: {os.path.basename(archivo)}"
+            )
+            ctk.CTkLabel(card, text=texto_card, justify="left", wraplength=540).pack(
+                side="left", padx=10, pady=8
+            )
+
+            btns = ctk.CTkFrame(card, fg_color="transparent")
+            btns.pack(side="right", padx=8, pady=6)
+            ctk.CTkButton(
+                btns,
+                text="🔤 Quemar Subs Hormozi + Publicar",
+                fg_color="#E91E63",
+                width=210,
+                command=lambda c=clip_info: self.hilo_quemar_subs_clip(c),
+            ).pack(pady=2)
+            ctk.CTkButton(
+                btns,
+                text="🚀 Enviar Directo al Publicador",
+                fg_color="#2196F3",
+                width=210,
+                command=lambda c=clip_info: self.enviar_clip_a_publicador(c),
+            ).pack(pady=2)
+
+    def hilo_quemar_subs_clip(self, clip_info):
+        self.ejecutar_en_hilo(lambda: self.ejecutar_quemar_subs_clip(clip_info))
+
+    def ejecutar_quemar_subs_clip(self, clip_info):
+        """Toma un clip recortado, transcribe su audio con Whisper, le quema subtítulos Hormozi + BGM opcional y lo manda al Publicador."""
+        archivo_origen = clip_info.get("archivo", "")
+        if not archivo_origen or not os.path.exists(archivo_origen):
+            self.mostrar_estado("❌ El archivo del clip no existe.", "red")
+            return
+
+        self.mostrar_estado("🔤 Quemando Subtítulos Virales Hormozi en el clip...", "orange")
+        renderer = VideoRenderer(self.formato_actual)
+        video_base = None
+        video_final = None
+        bgm_clip = None
+        try:
+            service = OpenAIService(self.entrada_openai.get().strip())
+            audio_temp = os.path.join(self.CARPETA_ASSETS, "temp_sub_clip.mp3")
+            ClippingService.extraer_audio(archivo_origen, audio_temp)
+            transcript = service.transcribir(audio_temp)
+
+            video_base = VideoFileClip(archivo_origen)
+            if self.ruta_musica_fondo and os.path.exists(self.ruta_musica_fondo) and video_base.audio:
+                audio_mezclado, bgm_clip = renderer.mezclar_audio_con_musica(
+                    video_base.audio,
+                    self.ruta_musica_fondo,
+                    volumen_musica=float(self.slider_vol_bgm.get()),
+                )
+                video_base = video_base.set_audio(audio_mezclado)
+
+            clips_subs = renderer.crear_subtitulos(transcript, self.menu_estilos_subs.get())
+            if clips_subs:
+                video_final = CompositeVideoClip([video_base] + clips_subs)
+            else:
+                video_final = video_base
+
+            base_sin_ext, _ = os.path.splitext(os.path.basename(archivo_origen))
+            ruta_subtitulado = os.path.join(self.CARPETA_ASSETS, f"{base_sin_ext}_SUBS_LISTO.mp4")
+            video_final.write_videofile(
+                ruta_subtitulado, fps=24, codec="libx264", audio_codec="aac", logger=None
+            )
+            clip_info["archivo"] = ruta_subtitulado
+            self.enviar_clip_a_publicador(clip_info)
+            self.mostrar_estado("🎉 ¡Clip con Subtítulos Hormozi listo en el Publicador para subir!", "#00FF00")
+        except Exception as e:
+            logging.exception("Error quemando subtítulos al clip")
+            self.mostrar_estado(f"❌ Error en subtítulos del clip: {e}", "red")
+        finally:
+            if bgm_clip:
+                try:
+                    bgm_clip.close()
+                except Exception:
+                    pass
+            if video_final and video_final is not video_base:
+                try:
+                    video_final.close()
+                except Exception:
+                    pass
+            if video_base:
+                try:
+                    video_base.close()
+                except Exception:
+                    pass
+
+    def enviar_clip_a_publicador(self, clip_info):
+        ruta = clip_info.get("archivo", "")
+        titulo = clip_info.get("titulo_seo", "Clip Viral #shorts")
+        razon = clip_info.get("razon_viral", "")
+        desc = f"{titulo}\n\n{razon}\n\n#shorts #viral #clips #tendencias"
+        self.ruta_video_publicar = ruta
+        self.after(
+            0,
+            lambda: self.lbl_video_pub.configure(
+                text=f"✅ Seleccionado: {os.path.basename(ruta)}", text_color="#00FF00"
+            ),
+        )
+        self.after(0, lambda: self.entrada_titulo_pub.delete(0, "end"))
+        self.after(0, lambda: self.entrada_titulo_pub.insert(0, titulo))
+        self.after(0, lambda: self.caja_desc_pub.delete("0.0", "end"))
+        self.after(0, lambda: self.caja_desc_pub.insert("0.0", desc))
+        self.after(0, lambda: self.pestanas.set("🚀 4. Publicador"))
+
+    def ejecutar_remix_completo(self):
+        """
+        MODO 2 (REMIX / CLONAR ÉXITO CON TU VOZ):
+        1. Transcribe el video viral descargado con Whisper.
+        2. Le pide a OpenAI que reescriba un guion 100% nuevo y aún más adictivo inspirado en ese video.
+        3. Corta el video original en escenas B-Roll transformadas (Espejo Horizontal + Zoom Anti-Copyright + orden dinámico).
+        4. Graba tu propia voz (Edge-TTS Gratis / OpenAI / ElevenLabs) y arma el Storyboard listo para exportar MP4.
+        """
+        if not self.ruta_video_clipping or not os.path.exists(self.ruta_video_clipping):
+            self.mostrar_estado("❌ Primero descarga un video por URL o carga uno desde tu PC.", "red")
+            return
+
+        self.formato_actual = "SHORT" if "SHORT" in self.menu_formato.get() else "LARGO"
+        anti_copy = self.switch_anticopyright.get() == 1
+        self.cambiar_estado_boton(self.btn_remix_completo, "disabled", "Re-editando Video Completo...")
+        try:
+            service = OpenAIService(self.entrada_openai.get().strip())
+            ruta_audio_temp = os.path.join(self.CARPETA_ASSETS, "remix_source_audio.mp3")
+            self.mostrar_estado("🎧 Paso 1/4: Extrayendo y transcribiendo el video viral original...", "yellow")
+            _, duracion_orig = ClippingService.extraer_audio(self.ruta_video_clipping, ruta_audio_temp)
+            transcript = service.transcribir(ruta_audio_temp, con_segmentos=True)
+            texto_original = getattr(transcript, "text", "") or ClippingService.formatear_transcripcion_con_timestamps(
+                transcript
+            )
+
+            genero_nombre = self.menu_genero.get()
+            info_gen = self.info_genero_actual
+            self.mostrar_estado(f"🧠 Paso 2/4: Reescribiendo guion mejorado ({genero_nombre})...", "orange")
+
+            prompt_remix = f"""Analiza la siguiente transcripción de un video que ya demostró ser viral:
+--- TRANSCRIPCIÓN ORIGINAL ---
+{texto_original[:8000]}
+--- FIN TRANSCRIPCIÓN ---
+
+Tu misión: Reescribe un guion 100% NUEVO, original, sin plagio literal pero conservando y potenciando la idea ganadora, el gancho y la estructura de retención, adaptado al género: {genero_nombre}.
+Tono: {info_gen['instruccion_tono']}
+Longitud: {'90 a 110 palabras (Formato Short Vertical)' if self.es_vertical else '1200 a 1600 palabras (Formato Largo)'}.
+Cierre: {info_gen['cierre_estructura']}
+
+Devuelve ESTRICTAMENTE un JSON con:
+- 'guion_locucion': texto completo en ESPAÑOL para narrar.
+- 'escenas': lista de 8 escenas ordenadas con 'narracion', 'keyword_pexels' y 'prompt_ia'.
+- 'keywords_visuales': lista de keywords en inglés.
+- 'prompts_visuales': lista de prompts en inglés.
+- 'titulo_seo': nuevo título aún más viral.
+- 'descripcion_seo': descripción con hashtags."""
+
+            modelo = self.menu_motor_ia.get().split()[0]
+            datos = service.generar_guion(modelo, prompt_remix, genero_key=genero_nombre)
+
+            self.escenas_guion = datos.get("escenas", [])
+            self.keywords_actuales = datos.get("keywords_visuales", [])
+            self.prompts_visuales = datos.get("prompts_visuales", [])
+            guion_nuevo = datos.get("guion_locucion", "").strip()
+
+            self.after(0, lambda: self.caja_guion.delete("0.0", "end"))
+            self.after(0, lambda: self.caja_guion.insert("0.0", guion_nuevo))
+            if "titulo_seo" in datos:
+                self.after(0, lambda: self.entrada_titulo.delete(0, "end"))
+                self.after(0, lambda: self.entrada_titulo.insert(0, datos["titulo_seo"]))
+            if "descripcion_seo" in datos:
+                self.after(0, lambda: self.caja_desc.delete("0.0", "end"))
+                self.after(0, lambda: self.caja_desc.insert("0.0", datos["descripcion_seo"]))
+
+            # Cortar el video original en múltiples B-Rolls reencuadrados y con filtro Anti-Copyright
+            self.mostrar_estado("✂️ Paso 3/4: Re-editando escenas del video con filtro Anti-Copyright...", "yellow")
+            num_cortes = max(6, len(self.escenas_guion) or 8)
+            dur_segmento = max(3.5, duracion_orig / num_cortes)
+            nuevos_brolls = []
+
+            for i in range(num_cortes):
+                ini = i * dur_segmento
+                fin = min(duracion_orig, ini + min(5.5, dur_segmento))
+                if fin - ini < 1.8:
+                    break
+                ruta_broll = os.path.join(self.CARPETA_ASSETS, f"remix_broll_{i:02d}.mp4")
+                ClippingService.recortar_y_transformar_clip(
+                    self.ruta_video_clipping,
+                    ini,
+                    fin,
+                    ruta_broll,
+                    formato_actual=self.formato_actual,
+                    anti_copyright=anti_copy,
+                    conservar_audio=False,
+                )
+                nuevos_brolls.append(ruta_broll)
+
+            # Alternamos ligeramente el orden de los B-Rolls para romper la huella digital del video original
+            if len(nuevos_brolls) > 3 and anti_copy:
+                pares = nuevos_brolls[::2]
+                impares = nuevos_brolls[1::2]
+                nuevos_brolls = impares + pares
+
+            self.pool_videos = nuevos_brolls
+            self.after(0, self.actualizar_lista_clips_ui)
+
+            # Grabar la nueva voz automáticamente y armar el Storyboard
+            self.mostrar_estado("🎙️ Paso 4/4: Grabando tu nueva locución y armando el Storyboard...", "orange")
+            self.ejecutar_paso2()
+            self.ejecutar_generar_timeline()
+            self.guardar_cache()
+            self.mostrar_estado(
+                "🎉 ¡Video Re-editado con Nuevo Guion, Tu Voz y Anti-Copyright listo en el Storyboard! Solo pulsa 'Exportar MP4 Final'.",
+                "#00FF00",
+            )
+        except Exception as e:
+            logging.exception("Error en Remix Completo")
+            self.mostrar_estado(f"❌ Error en Remix Completo: {e}", "red")
+        finally:
+            self.cambiar_estado_boton(
+                self.btn_remix_completo,
+                "normal",
+                "🔄 MODO 2: Re-editar con Tu Voz (Clonar Éxito + Nuevo Guion)",
+            )
 
 
 if __name__ == "__main__":
