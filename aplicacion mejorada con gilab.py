@@ -285,6 +285,122 @@ class PexelsService:
         return ruta_salida
 
 
+class PixabayService:
+    """
+    Banco de videos HD/4K 100% GRATIS con API Key.
+    Obtén tu key gratis en: https://pixabay.com/api/docs/
+    """
+
+    def __init__(self, api_key):
+        if not api_key:
+            raise ValueError("Falta la API key de Pixabay (es 100% gratis en pixabay.com/api/docs/).")
+        self.api_key = api_key
+
+    def buscar_videos(self, keyword, cantidad=3):
+        resp = requests.get(
+            "https://pixabay.com/api/videos/",
+            params={
+                "key": self.api_key,
+                "q": keyword,
+                "per_page": max(3, cantidad),
+                "video_type": "film",
+                "safesearch": "true",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return resp.json().get("hits", [])
+
+    @staticmethod
+    def elegir_mejor_archivo(hit_obj):
+        """Elige la variante HD (medium = 1080p o large = 1920p) de Pixabay."""
+        videos = hit_obj.get("videos", {})
+        for calidad in ("medium", "large", "small", "tiny"):
+            url = videos.get(calidad, {}).get("url")
+            if url:
+                return url
+        return None
+
+
+class PollinationsService:
+    """
+    Generador de Imágenes IA con modelo FLUX 100% GRATIS ($0.00).
+    Se combina con el motor Ken Burns para crear clips en movimiento a costo cero.
+    """
+
+    @staticmethod
+    def generar_imagen_flux(prompt, ruta_salida, vertical=True, api_key=None):
+        ancho, alto = (1080, 1920) if vertical else (1920, 1080)
+        seed = random.randint(1, 999999)
+        prompt_url = requests.utils.quote(prompt)
+        url = (
+            f"https://image.pollinations.ai/prompt/{prompt_url}"
+            f"?width={ancho}&height={alto}&model=flux&nologo=true&seed={seed}"
+        )
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        resp = requests.get(url, headers=headers, timeout=90)
+        resp.raise_for_status()
+        with open(ruta_salida, "wb") as f:
+            f.write(resp.content)
+        return ruta_salida
+
+
+class ReplicateVideoService:
+    """
+    Plataforma Pago-Por-Uso por segundo de GPU (Wan 2.1 Ultra Económico, LTX-Video, Hailuo).
+    Obtén tu token en: https://replicate.com/account/api-tokens
+    """
+
+    MODELOS = {
+        "Wan 2.1 (Económico ~$0.05/clip)": "wavespeedai/wan-2.1-t2v-480p",
+        "Minimax Video-01 (Cine)": "minimax/video-01",
+    }
+
+    def __init__(self, api_key):
+        if not api_key:
+            raise ValueError("Falta el API Token de Replicate.")
+        self.api_key = api_key
+        self.headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def generar_video(self, prompt, ruta_salida, modelo_nombre="Wan 2.1 (Económico ~$0.05/clip)", vertical=True, max_intentos=60):
+        modelo_slug = self.MODELOS.get(modelo_nombre, "wavespeedai/wan-2.1-t2v-480p")
+        aspect_ratio = "9:16" if vertical else "16:9"
+        resp = requests.post(
+            f"https://api.replicate.com/v1/models/{modelo_slug}/predictions",
+            headers=self.headers,
+            json={"input": {"prompt": prompt, "aspect_ratio": aspect_ratio}},
+            timeout=REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        pred = resp.json()
+        url_estado = pred.get("urls", {}).get("get")
+        if not url_estado:
+            raise Exception("Replicate no devolvió URL de seguimiento.")
+
+        for _ in range(max_intentos):
+            r_est = requests.get(url_estado, headers=self.headers, timeout=REQUEST_TIMEOUT)
+            r_est.raise_for_status()
+            data = r_est.json()
+            status = data.get("status")
+            if status == "succeeded":
+                output = data.get("output")
+                video_url = output[0] if isinstance(output, list) else output
+                vid = requests.get(video_url, timeout=REQUEST_TIMEOUT)
+                vid.raise_for_status()
+                with open(ruta_salida, "wb") as f:
+                    f.write(vid.content)
+                return ruta_salida
+            if status in ("failed", "canceled"):
+                raise Exception(f"Replicate falló ({status}): {data.get('error')}")
+            time.sleep(8)
+        raise TimeoutError("Replicate tardó demasiado en generar el video.")
+
+
 class StabilityVideoService:
     """Generador de video IA (Stability AI - Image to Video)."""
 
@@ -341,15 +457,23 @@ class RunwayVideoService:
 
 class FalVideoService:
     """
-    Generador de video IA vía Fal.ai (Kling, Seedance, Luma, etc.).
-    Patrón submit + poll. Text-to-video directo. Pago por uso.
+    Generador de video e imagen IA vía Fal.ai (Pago por uso puro sin mensualidad).
+    Incluye los motores más baratos del mercado:
+    - Flux Schnell (~$0.003 por imagen + Zoom Ken Burns)
+    - LTX-Video (~$0.02 por clip de video)
+    - Wan 2.1 (~$0.05 por clip de video)
+    - Kling 1.6, MiniMax Hailuo, Seedance, Luma
     Obtén tu key en: https://fal.ai/dashboard/keys
     """
 
     MODELOS = {
-        "Kling": "fal-ai/kling-video/v1.6/standard/text-to-video",
-        "Seedance": "fal-ai/bytedance/seedance/v1/lite/text-to-video",
-        "Luma": "fal-ai/luma-dream-machine",
+        "LTX-Video (~$0.02/clip Ultra Barato)": "fal-ai/ltx-video",
+        "Wan 2.1 (~$0.05/clip Calidad/Precio)": "fal-ai/wan-t2v",
+        "Flux Schnell + Ken Burns (~$0.003/clip)": "fal-ai/flux/schnell",
+        "Kling 1.6 Standard (Cine)": "fal-ai/kling-video/v1.6/standard/text-to-video",
+        "MiniMax Hailuo (Realismo Top)": "fal-ai/minimax/video-01",
+        "Seedance Lite": "fal-ai/bytedance/seedance/v1/lite/text-to-video",
+        "Luma Dream Machine": "fal-ai/luma-dream-machine",
     }
 
     def __init__(self, api_key):
@@ -362,16 +486,34 @@ class FalVideoService:
         }
 
     def _endpoint(self, modelo):
-        ruta = self.MODELOS.get(modelo, self.MODELOS["Kling"])
+        ruta = self.MODELOS.get(modelo, "fal-ai/wan-t2v")
         return f"https://queue.fal.run/{ruta}"
+
+    def generar_imagen_flux_schnell(self, prompt, ruta_imagen, vertical=True):
+        """Genera una imagen hiperrealista con Flux Schnell en Fal.ai (~$0.003 USD)."""
+        image_size = "portrait_16_9" if vertical else "landscape_16_9"
+        resp = requests.post(
+            "https://fal.run/fal-ai/flux/schnell",
+            headers=self.headers,
+            json={"prompt": prompt, "image_size": image_size, "num_inference_steps": 4},
+            timeout=REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        img_url = resp.json()["images"][0]["url"]
+        img_bytes = requests.get(img_url, timeout=REQUEST_TIMEOUT)
+        img_bytes.raise_for_status()
+        with open(ruta_imagen, "wb") as f:
+            f.write(img_bytes.content)
+        return ruta_imagen
 
     def iniciar_generacion(self, prompt, modelo, vertical=True):
         aspect_ratio = "9:16" if vertical else "16:9"
         payload = {
             "prompt": prompt,
             "aspect_ratio": aspect_ratio,
-            "duration": "5",
         }
+        if "Kling" in modelo or "Seedance" in modelo:
+            payload["duration"] = "5"
         resp = requests.post(
             self._endpoint(modelo),
             headers=self.headers,
@@ -391,7 +533,13 @@ class FalVideoService:
             if estado == "COMPLETED":
                 final = requests.get(response_url, headers=self.headers, timeout=REQUEST_TIMEOUT)
                 final.raise_for_status()
-                video_url = final.json()["video"]["url"]
+                datos_final = final.json()
+                video_url = (
+                    datos_final.get("video", {}).get("url")
+                    or (datos_final.get("videos", [{}])[0].get("url") if datos_final.get("videos") else None)
+                )
+                if not video_url:
+                    raise Exception(f"Fal.ai no devolvió URL de video: {datos_final}")
                 video_bytes = requests.get(video_url, timeout=REQUEST_TIMEOUT)
                 video_bytes.raise_for_status()
                 with open(ruta_salida, "wb") as f:
@@ -401,7 +549,7 @@ class FalVideoService:
             if estado in ("FAILED", "ERROR"):
                 raise Exception(f"Fal.ai falló al generar el video (estado: {estado}).")
 
-            time.sleep(10)
+            time.sleep(8)
 
         raise TimeoutError("Fal.ai tardó demasiado en generar el video.")
 
@@ -726,42 +874,61 @@ class StudioApp(ctk.CTk):
 
         # FUENTE VISUAL
         ctk.CTkLabel(
-            frame_izq, text="🎨 Fuente de Visuales:",
-            font=ctk.CTkFont(size=16, weight="bold"), text_color="#9C27B0",
+            frame_izq, text="🎨 Fuente de Visuales (Gratis y Pago por Uso):",
+            font=ctk.CTkFont(size=15, weight="bold"), text_color="#9C27B0",
         ).pack(anchor="w", padx=20, pady=(15, 0))
         self.menu_fuente_visual = ctk.CTkOptionMenu(
             frame_izq,
             values=[
-                "Pexels (Clips reales)",
+                "Combo Gratis HD (Pexels + Pixabay)",
+                "Pexels (Clips reales - Gratis)",
+                "Pixabay (Clips reales - Gratis)",
+                "Pollinations Flux IA (100% Gratis + Ken Burns)",
+                "Fal.ai (Pago por uso desde $0.003/clip)",
+                "Replicate (Pago por uso: Wan 2.1 / Minimax)",
                 "OpenAI Images (IA + Zoom Ken Burns)",
                 "Stability Video (IA)",
                 "Runway Video (IA)",
-                "Fal.ai (Kling/Seedance/Luma)",
             ],
             width=300, fg_color="#9C27B0",
         )
         self.menu_fuente_visual.pack(padx=20, pady=5)
 
         # MODELO FAL
-        ctk.CTkLabel(frame_izq, text="🎞️ Modelo Fal.ai:").pack(anchor="w", padx=20, pady=(5, 0))
+        ctk.CTkLabel(frame_izq, text="🎞️ Modelo Fal.ai (Pago por uso):").pack(anchor="w", padx=20, pady=(5, 0))
         self.menu_modelo_fal = ctk.CTkOptionMenu(
-            frame_izq, values=["Kling", "Seedance", "Luma"], width=300, fg_color="#673AB7",
+            frame_izq,
+            values=list(FalVideoService.MODELOS.keys()),
+            width=300, fg_color="#673AB7",
         )
         self.menu_modelo_fal.pack(padx=20, pady=5)
 
-        ctk.CTkLabel(frame_izq, text="🔑 API Keys:").pack(anchor="w", padx=20, pady=(15, 0))
+        # MODELO REPLICATE
+        ctk.CTkLabel(frame_izq, text="⚡ Modelo Replicate (Pago por uso):").pack(anchor="w", padx=20, pady=(5, 0))
+        self.menu_modelo_replicate = ctk.CTkOptionMenu(
+            frame_izq,
+            values=list(ReplicateVideoService.MODELOS.keys()),
+            width=300, fg_color="#512DA8",
+        )
+        self.menu_modelo_replicate.pack(padx=20, pady=5)
+
+        ctk.CTkLabel(frame_izq, text="🔑 API Keys (Gratis / Pago por uso):").pack(anchor="w", padx=20, pady=(15, 0))
         self.entrada_openai = ctk.CTkEntry(frame_izq, width=300, placeholder_text="OpenAI sk-...", show="*")
         self.entrada_openai.pack(padx=20, pady=2)
         self.entrada_eleven = ctk.CTkEntry(frame_izq, width=300, placeholder_text="ElevenLabs", show="*")
         self.entrada_eleven.pack(padx=20, pady=2)
-        self.entrada_pexels = ctk.CTkEntry(frame_izq, width=300, placeholder_text="Pexels", show="*")
+        self.entrada_pexels = ctk.CTkEntry(frame_izq, width=300, placeholder_text="Pexels (Gratis)", show="*")
         self.entrada_pexels.pack(padx=20, pady=2)
+        self.entrada_pixabay = ctk.CTkEntry(frame_izq, width=300, placeholder_text="Pixabay (Gratis en pixabay.com/api/docs)", show="*")
+        self.entrada_pixabay.pack(padx=20, pady=2)
+        self.entrada_fal = ctk.CTkEntry(frame_izq, width=300, placeholder_text="Fal.ai (Pago por uso barato)", show="*")
+        self.entrada_fal.pack(padx=20, pady=2)
+        self.entrada_replicate = ctk.CTkEntry(frame_izq, width=300, placeholder_text="Replicate r8_... (Pago por uso)", show="*")
+        self.entrada_replicate.pack(padx=20, pady=2)
         self.entrada_stability = ctk.CTkEntry(frame_izq, width=300, placeholder_text="Stability AI", show="*")
         self.entrada_stability.pack(padx=20, pady=2)
         self.entrada_runway = ctk.CTkEntry(frame_izq, width=300, placeholder_text="Runway", show="*")
         self.entrada_runway.pack(padx=20, pady=2)
-        self.entrada_fal = ctk.CTkEntry(frame_izq, width=300, placeholder_text="Fal.ai", show="*")
-        self.entrada_fal.pack(padx=20, pady=2)
 
         self.btn_guardar = ctk.CTkButton(
             frame_izq, text="💾 Guardar Ajustes", command=self.guardar_keys,
@@ -851,13 +1018,16 @@ class StudioApp(ctk.CTk):
             "openai": self.entrada_openai.get().strip(),
             "elevenlabs": self.entrada_eleven.get().strip(),
             "pexels": self.entrada_pexels.get().strip(),
+            "pixabay": self.entrada_pixabay.get().strip(),
             "stability": self.entrada_stability.get().strip(),
             "runway": self.entrada_runway.get().strip(),
             "fal": self.entrada_fal.get().strip(),
+            "replicate": self.entrada_replicate.get().strip(),
             "motor_ia": self.menu_motor_ia.get(),
             "voz_eleven": self.menu_voz_eleven.get(),
             "fuente_visual": self.menu_fuente_visual.get(),
             "modelo_fal": self.menu_modelo_fal.get(),
+            "modelo_replicate": self.menu_modelo_replicate.get(),
         }
         try:
             with open(self.ARCHIVO_KEYS, "w") as f:
@@ -879,20 +1049,26 @@ class StudioApp(ctk.CTk):
                 self.entrada_eleven.insert(0, k["elevenlabs"])
             if k.get("pexels"):
                 self.entrada_pexels.insert(0, k["pexels"])
+            if k.get("pixabay"):
+                self.entrada_pixabay.insert(0, k["pixabay"])
             if k.get("stability"):
                 self.entrada_stability.insert(0, k["stability"])
             if k.get("runway"):
                 self.entrada_runway.insert(0, k["runway"])
             if k.get("fal"):
                 self.entrada_fal.insert(0, k["fal"])
+            if k.get("replicate"):
+                self.entrada_replicate.insert(0, k["replicate"])
             if k.get("motor_ia"):
                 self.menu_motor_ia.set(k["motor_ia"])
             if k.get("voz_eleven") and k["voz_eleven"] in ElevenLabsService.VOCES:
                 self.menu_voz_eleven.set(k["voz_eleven"])
             if k.get("fuente_visual"):
                 self.menu_fuente_visual.set(k["fuente_visual"])
-            if k.get("modelo_fal"):
+            if k.get("modelo_fal") and k["modelo_fal"] in FalVideoService.MODELOS:
                 self.menu_modelo_fal.set(k["modelo_fal"])
+            if k.get("modelo_replicate") and k["modelo_replicate"] in ReplicateVideoService.MODELOS:
+                self.menu_modelo_replicate.set(k["modelo_replicate"])
         except Exception:
             logging.exception("Error al cargar keys")
 
@@ -1392,8 +1568,14 @@ REGLAS DE ORO:
         try:
             # Limpiamos el pool anterior para que el nuevo video quede 100% sincronizado en orden
             self.pool_videos = []
-            if fuente.startswith("Pexels"):
+            if fuente.startswith("Combo Gratis"):
+                self.generar_clips_combo_gratis()
+            elif fuente.startswith("Pexels"):
                 self.generar_clips_pexels()
+            elif fuente.startswith("Pixabay"):
+                self.generar_clips_pixabay()
+            elif fuente.startswith("Pollinations"):
+                self.generar_clips_pollinations()
             elif fuente.startswith("OpenAI Images"):
                 self.generar_clips_imagenes_openai()
             elif fuente.startswith("Stability Video"):
@@ -1402,6 +1584,8 @@ REGLAS DE ORO:
                 self.generar_clips_runway_video()
             elif fuente.startswith("Fal.ai"):
                 self.generar_clips_fal()
+            elif fuente.startswith("Replicate"):
+                self.generar_clips_replicate()
 
             self.after(0, self.actualizar_lista_clips_ui)
             self.after(0, lambda: self.pestanas.set("🎬 2. Gestor Clips"))
@@ -1443,6 +1627,145 @@ REGLAS DE ORO:
                 except Exception:
                     logging.exception("Error descargando clip de Pexels")
         self.mostrar_estado("✅ Clips HD de Pexels descargados en orden narrativo.", "green")
+
+    def generar_clips_pixabay(self):
+        self.mostrar_estado("Buscando clips HD en Pixabay (100% Gratis)...", "yellow")
+        service = PixabayService(self.entrada_pixabay.get().strip())
+        cantidad = 1 if self.es_vertical else 2
+
+        for idx_kw, kw in enumerate(self.keywords_actuales):
+            try:
+                self.mostrar_estado(
+                    f"🔎 Pixabay escena {idx_kw + 1}/{len(self.keywords_actuales)}: {kw}...",
+                    "yellow",
+                )
+                hits = service.buscar_videos(kw, cantidad=3)
+            except Exception:
+                logging.exception("Error buscando %s en Pixabay", kw)
+                continue
+            for i, h in enumerate(hits[:cantidad]):
+                nombre = os.path.join(
+                    self.CARPETA_ASSETS,
+                    f"pixabay_{idx_kw:02d}_{limpiar_nombre(kw)}_{i}.mp4",
+                )
+                try:
+                    url_hd = PixabayService.elegir_mejor_archivo(h)
+                    if not url_hd:
+                        continue
+                    PexelsService.descargar(url_hd, nombre)
+                    if nombre not in self.pool_videos:
+                        self.pool_videos.append(nombre)
+                except Exception:
+                    logging.exception("Error descargando clip de Pixabay")
+        self.mostrar_estado("✅ Clips HD de Pixabay descargados en orden narrativo.", "green")
+
+    def generar_clips_combo_gratis(self):
+        """Alterna y respalda automáticamente entre Pexels y Pixabay para máxima variedad a costo $0."""
+        self.mostrar_estado("Buscando en Combo Gratis HD (Pexels + Pixabay)...", "yellow")
+        key_pexels = self.entrada_pexels.get().strip()
+        key_pixabay = self.entrada_pixabay.get().strip()
+        if not key_pexels and not key_pixabay:
+            raise ValueError("Ingresa al menos tu API Key gratuita de Pexels o de Pixabay.")
+
+        pexels = PexelsService(key_pexels) if key_pexels else None
+        pixabay = PixabayService(key_pixabay) if key_pixabay else None
+        ori = "portrait" if self.es_vertical else "landscape"
+
+        for idx_kw, kw in enumerate(self.keywords_actuales):
+            descargado = False
+            usar_pixabay_primero = (idx_kw % 2 == 1) and (pixabay is not None)
+            orden_fuentes = ["pixabay", "pexels"] if usar_pixabay_primero else ["pexels", "pixabay"]
+
+            for fuente in orden_fuentes:
+                if descargado:
+                    break
+                if fuente == "pexels" and pexels:
+                    try:
+                        self.mostrar_estado(
+                            f"🔎 Combo Gratis [{idx_kw + 1}/{len(self.keywords_actuales)}] Pexels: {kw}...",
+                            "yellow",
+                        )
+                        videos = pexels.buscar_videos(kw, 1, ori)
+                        if videos:
+                            url_hd = PexelsService.elegir_mejor_archivo(videos[0], vertical=self.es_vertical)
+                            if url_hd:
+                                nombre = os.path.join(
+                                    self.CARPETA_ASSETS,
+                                    f"combo_{idx_kw:02d}_pexels_{limpiar_nombre(kw)}.mp4",
+                                )
+                                PexelsService.descargar(url_hd, nombre)
+                                self.pool_videos.append(nombre)
+                                descargado = True
+                    except Exception:
+                        logging.exception("Fallback de Pexels en Combo Gratis")
+                elif fuente == "pixabay" and pixabay:
+                    try:
+                        self.mostrar_estado(
+                            f"🔎 Combo Gratis [{idx_kw + 1}/{len(self.keywords_actuales)}] Pixabay: {kw}...",
+                            "yellow",
+                        )
+                        hits = pixabay.buscar_videos(kw, cantidad=3)
+                        if hits:
+                            url_hd = PixabayService.elegir_mejor_archivo(hits[0])
+                            if url_hd:
+                                nombre = os.path.join(
+                                    self.CARPETA_ASSETS,
+                                    f"combo_{idx_kw:02d}_pixabay_{limpiar_nombre(kw)}.mp4",
+                                )
+                                PexelsService.descargar(url_hd, nombre)
+                                self.pool_videos.append(nombre)
+                                descargado = True
+                    except Exception:
+                        logging.exception("Fallback de Pixabay en Combo Gratis")
+
+        self.mostrar_estado("✅ Clips Combo Gratis HD (Pexels + Pixabay) listos.", "green")
+
+    def generar_clips_pollinations(self):
+        """Genera escenas con IA Flux 100% GRATIS ($0) en Pollinations y las anima con Ken Burns."""
+        self.mostrar_estado("Generando escenas IA con Pollinations Flux (100% Gratis)...", "yellow")
+        renderer = VideoRenderer(self.formato_actual)
+        prompts = self.prompts_visuales or self.keywords_actuales
+
+        for i, prompt in enumerate(prompts):
+            prompt_img = (
+                f"Cinematic hyperrealistic financial documentary scene: {prompt}. "
+                f"Dramatic lighting, 8k resolution, photorealistic, no text, no watermark."
+            )
+            ruta_img = os.path.join(self.CARPETA_ASSETS, f"flux_free_{i:02d}.png")
+            ruta_video = os.path.join(self.CARPETA_ASSETS, f"flux_free_clip_{i:02d}.mp4")
+            try:
+                self.mostrar_estado(
+                    f"🎨 Pollinations Flux Gratis {i + 1}/{len(prompts)} + Zoom Ken Burns...",
+                    "yellow",
+                )
+                PollinationsService.generar_imagen_flux(prompt_img, ruta_img, vertical=self.es_vertical)
+                renderer.convertir_imagen_a_clip(ruta_img, ruta_video, duracion=5)
+                if ruta_video not in self.pool_videos:
+                    self.pool_videos.append(ruta_video)
+            except Exception:
+                logging.exception("Error en Pollinations Flux escena %s", i)
+        self.mostrar_estado("✅ Clips IA Gratis (Pollinations Flux + Ken Burns) listos.", "green")
+
+    def generar_clips_replicate(self):
+        modelo = self.menu_modelo_replicate.get()
+        self.mostrar_estado(f"Generando video IA en Replicate ({modelo})...", "yellow")
+        replicate = ReplicateVideoService(self.entrada_replicate.get().strip())
+        prompts = self.prompts_visuales or self.keywords_actuales
+
+        for i, prompt in enumerate(prompts):
+            prompt_video = (
+                f"Cinematic realistic scene about: {prompt}. "
+                f"Smooth camera movement, dramatic lighting, no text, no watermark."
+            )
+            ruta_video = os.path.join(self.CARPETA_ASSETS, f"replicate_{i:02d}.mp4")
+            try:
+                self.mostrar_estado(f"⚡ Replicate {i + 1}/{len(prompts)} ({modelo})...", "yellow")
+                replicate.generar_video(prompt_video, ruta_video, modelo_nombre=modelo, vertical=self.es_vertical)
+                if ruta_video not in self.pool_videos:
+                    self.pool_videos.append(ruta_video)
+            except Exception:
+                logging.exception("Error generando video Replicate %s", i)
+        self.mostrar_estado("✅ Clips de video IA (Replicate) generados.", "green")
 
     def generar_clips_imagenes_openai(self):
         self.mostrar_estado("Generando imágenes con IA + Efecto Ken Burns...", "yellow")
@@ -1518,8 +1841,9 @@ REGLAS DE ORO:
 
     def generar_clips_fal(self):
         modelo = self.menu_modelo_fal.get()
-        self.mostrar_estado(f"Generando video IA con Fal.ai ({modelo})...", "yellow")
+        self.mostrar_estado(f"Generando con Fal.ai ({modelo})...", "yellow")
         fal = FalVideoService(self.entrada_fal.get().strip())
+        renderer = VideoRenderer(self.formato_actual)
         prompts = self.prompts_visuales or self.keywords_actuales
 
         for i, prompt in enumerate(prompts):
@@ -1530,15 +1854,20 @@ REGLAS DE ORO:
             ruta_video = os.path.join(self.CARPETA_ASSETS, f"fal_{limpiar_nombre(modelo)}_{i:02d}.mp4")
             try:
                 self.mostrar_estado(f"🎬 Fal.ai {modelo} {i + 1}/{len(prompts)}...", "yellow")
-                _, status_url, response_url = fal.iniciar_generacion(
-                    prompt_video, modelo, vertical=self.es_vertical
-                )
-                fal.esperar_y_descargar(status_url, response_url, ruta_video)
+                if "Flux Schnell" in modelo:
+                    ruta_img = os.path.join(self.CARPETA_ASSETS, f"fal_flux_{i:02d}.png")
+                    fal.generar_imagen_flux_schnell(prompt_video, ruta_img, vertical=self.es_vertical)
+                    renderer.convertir_imagen_a_clip(ruta_img, ruta_video, duracion=5)
+                else:
+                    _, status_url, response_url = fal.iniciar_generacion(
+                        prompt_video, modelo, vertical=self.es_vertical
+                    )
+                    fal.esperar_y_descargar(status_url, response_url, ruta_video)
                 if ruta_video not in self.pool_videos:
                     self.pool_videos.append(ruta_video)
             except Exception:
-                logging.exception("Error generando video Fal.ai %s", i)
-        self.mostrar_estado(f"✅ Clips de video IA (Fal.ai {modelo}) generados.", "green")
+                logging.exception("Error generando con Fal.ai %s", i)
+        self.mostrar_estado(f"✅ Clips de Fal.ai ({modelo}) generados.", "green")
 
     # ==========================================
     # PASO 3b: STORYBOARD (SINCRONIZADO POR ESCENA)
