@@ -458,23 +458,62 @@ class RunwayVideoService:
 class FalVideoService:
     """
     Generador de video e imagen IA vía Fal.ai (Pago por uso puro sin mensualidad).
-    Incluye los motores más baratos del mercado:
-    - Flux Schnell (~$0.003 por imagen + Zoom Ken Burns)
-    - LTX-Video (~$0.02 por clip de video)
-    - Wan 2.1 (~$0.05 por clip de video)
-    - Kling 1.6, MiniMax Hailuo, Seedance, Luma
+    Incluye Kling 3.0 (Standard y Pro), ingeniería de cámara estilo Higgsfield,
+    y los motores más baratos del mercado (Flux Schnell $0.003, LTX $0.02, Wan 2.1 $0.05).
     Obtén tu key en: https://fal.ai/dashboard/keys
     """
 
     MODELOS = {
-        "LTX-Video (~$0.02/clip Ultra Barato)": "fal-ai/ltx-video",
+        "Kling 3.0 Standard (~$0.42/clip - Top Cine)": "fal-ai/kling-video/v3/standard/text-to-video",
+        "Kling 3.0 Pro (~$0.56/clip - Master)": "fal-ai/kling-video/v3/pro/text-to-video",
         "Wan 2.1 (~$0.05/clip Calidad/Precio)": "fal-ai/wan-t2v",
+        "LTX-Video (~$0.02/clip Ultra Barato)": "fal-ai/ltx-video",
         "Flux Schnell + Ken Burns (~$0.003/clip)": "fal-ai/flux/schnell",
-        "Kling 1.6 Standard (Cine)": "fal-ai/kling-video/v1.6/standard/text-to-video",
+        "Kling 1.6 Standard (Económico)": "fal-ai/kling-video/v1.6/standard/text-to-video",
         "MiniMax Hailuo (Realismo Top)": "fal-ai/minimax/video-01",
         "Seedance Lite": "fal-ai/bytedance/seedance/v1/lite/text-to-video",
         "Luma Dream Machine": "fal-ai/luma-dream-machine",
     }
+
+    CAMARAS_HIGGSFIELD = {
+        "Automático (Rotar cámaras Higgsfield)": [
+            "Higgsfield DoP style fast crash zoom-in onto subject, 35mm anamorphic lens, subtle film grain, motion blur",
+            "Dynamic FPV drone sweeping shot flying through scene, ultra-cinematic lighting, shallow depth of field",
+            "Slow dramatic dolly-in push shot, 35mm cinema camera, volumetric lighting, high contrast shadows",
+            "Handheld documentary tracking camera movement, raw hyperrealistic texture, natural lens flare",
+            "Bullet-time slow-motion orbital camera pan around subject, dramatic rim lighting, IMAX 70mm look",
+        ],
+        "Crash Zoom (Impacto Brutal para Ganchos)": (
+            "Higgsfield DoP signature whip crash zoom-in, sudden dramatic focus, 35mm anamorphic lens, cinematic motion blur"
+        ),
+        "FPV Drone (Vuelo Épico Cinematográfico)": (
+            "High-speed FPV drone camera sweeping smoothly through the environment, epic scale, photorealistic 35mm film"
+        ),
+        "Dolly In Anamórfico 35mm (Documental Pro)": (
+            "Slow tension-building dolly-in camera movement, 35mm anamorphic bokeh, moody volumetric lighting, film grain"
+        ),
+        "Handheld / Cámara en Mano Realista": (
+            "Organic handheld cinema camera movement, gritty hyperrealistic documentary aesthetic, natural lighting"
+        ),
+        "Bullet Time / Cámara Lenta Orbital": (
+            "Slow-motion 120fps orbital camera arc around the subject, suspended particles, dramatic Hollywood lighting"
+        ),
+    }
+
+    @classmethod
+    def aplicar_camara_higgsfield(cls, prompt_base, opcion_camara, idx_escena=0):
+        preset = cls.CAMARAS_HIGGSFIELD.get(opcion_camara)
+        if isinstance(preset, list):
+            directiva_camara = preset[idx_escena % len(preset)]
+        elif isinstance(preset, str):
+            directiva_camara = preset
+        else:
+            directiva_camara = cls.CAMARAS_HIGGSFIELD["Automático (Rotar cámaras Higgsfield)"][0]
+        return (
+            f"Cinematic realistic scene: {prompt_base}. "
+            f"Camera direction: {directiva_camara}. "
+            f"Photorealistic, no text, no watermark."
+        )
 
     def __init__(self, api_key):
         if not api_key:
@@ -880,11 +919,12 @@ class StudioApp(ctk.CTk):
         self.menu_fuente_visual = ctk.CTkOptionMenu(
             frame_izq,
             values=[
+                "🔥 Híbrido Viral (Gancho Kling 3.0 + Resto Gratis/Barato)",
                 "Combo Gratis HD (Pexels + Pixabay)",
                 "Pexels (Clips reales - Gratis)",
                 "Pixabay (Clips reales - Gratis)",
                 "Pollinations Flux IA (100% Gratis + Ken Burns)",
-                "Fal.ai (Pago por uso desde $0.003/clip)",
+                "Fal.ai (Kling 3.0 / Wan 2.1 / LTX / Flux)",
                 "Replicate (Pago por uso: Wan 2.1 / Minimax)",
                 "OpenAI Images (IA + Zoom Ken Burns)",
                 "Stability Video (IA)",
@@ -895,13 +935,22 @@ class StudioApp(ctk.CTk):
         self.menu_fuente_visual.pack(padx=20, pady=5)
 
         # MODELO FAL
-        ctk.CTkLabel(frame_izq, text="🎞️ Modelo Fal.ai (Pago por uso):").pack(anchor="w", padx=20, pady=(5, 0))
+        ctk.CTkLabel(frame_izq, text="🎞️ Modelo Fal.ai (Kling 3.0 / Económicos):").pack(anchor="w", padx=20, pady=(5, 0))
         self.menu_modelo_fal = ctk.CTkOptionMenu(
             frame_izq,
             values=list(FalVideoService.MODELOS.keys()),
             width=300, fg_color="#673AB7",
         )
         self.menu_modelo_fal.pack(padx=20, pady=5)
+
+        # CÁMARA ESTILO HIGGSFIELD
+        ctk.CTkLabel(frame_izq, text="🎥 Cámara Estilo Higgsfield (IA):").pack(anchor="w", padx=20, pady=(5, 0))
+        self.menu_camara_higgsfield = ctk.CTkOptionMenu(
+            frame_izq,
+            values=list(FalVideoService.CAMARAS_HIGGSFIELD.keys()),
+            width=300, fg_color="#AD1457",
+        )
+        self.menu_camara_higgsfield.pack(padx=20, pady=5)
 
         # MODELO REPLICATE
         ctk.CTkLabel(frame_izq, text="⚡ Modelo Replicate (Pago por uso):").pack(anchor="w", padx=20, pady=(5, 0))
@@ -1027,6 +1076,7 @@ class StudioApp(ctk.CTk):
             "voz_eleven": self.menu_voz_eleven.get(),
             "fuente_visual": self.menu_fuente_visual.get(),
             "modelo_fal": self.menu_modelo_fal.get(),
+            "camara_higgsfield": self.menu_camara_higgsfield.get(),
             "modelo_replicate": self.menu_modelo_replicate.get(),
         }
         try:
@@ -1067,6 +1117,8 @@ class StudioApp(ctk.CTk):
                 self.menu_fuente_visual.set(k["fuente_visual"])
             if k.get("modelo_fal") and k["modelo_fal"] in FalVideoService.MODELOS:
                 self.menu_modelo_fal.set(k["modelo_fal"])
+            if k.get("camara_higgsfield") and k["camara_higgsfield"] in FalVideoService.CAMARAS_HIGGSFIELD:
+                self.menu_camara_higgsfield.set(k["camara_higgsfield"])
             if k.get("modelo_replicate") and k["modelo_replicate"] in ReplicateVideoService.MODELOS:
                 self.menu_modelo_replicate.set(k["modelo_replicate"])
         except Exception:
@@ -1568,7 +1620,9 @@ REGLAS DE ORO:
         try:
             # Limpiamos el pool anterior para que el nuevo video quede 100% sincronizado en orden
             self.pool_videos = []
-            if fuente.startswith("Combo Gratis"):
+            if "Híbrido Viral" in fuente:
+                self.generar_clips_hibrido_viral()
+            elif fuente.startswith("Combo Gratis"):
                 self.generar_clips_combo_gratis()
             elif fuente.startswith("Pexels"):
                 self.generar_clips_pexels()
@@ -1841,16 +1895,14 @@ REGLAS DE ORO:
 
     def generar_clips_fal(self):
         modelo = self.menu_modelo_fal.get()
+        estilo_camara = self.menu_camara_higgsfield.get()
         self.mostrar_estado(f"Generando con Fal.ai ({modelo})...", "yellow")
         fal = FalVideoService(self.entrada_fal.get().strip())
         renderer = VideoRenderer(self.formato_actual)
         prompts = self.prompts_visuales or self.keywords_actuales
 
         for i, prompt in enumerate(prompts):
-            prompt_video = (
-                f"Cinematic realistic scene about: {prompt}. "
-                f"Smooth camera movement, dramatic lighting, no text, no watermark."
-            )
+            prompt_video = FalVideoService.aplicar_camara_higgsfield(prompt, estilo_camara, idx_escena=i)
             ruta_video = os.path.join(self.CARPETA_ASSETS, f"fal_{limpiar_nombre(modelo)}_{i:02d}.mp4")
             try:
                 self.mostrar_estado(f"🎬 Fal.ai {modelo} {i + 1}/{len(prompts)}...", "yellow")
@@ -1868,6 +1920,102 @@ REGLAS DE ORO:
             except Exception:
                 logging.exception("Error generando con Fal.ai %s", i)
         self.mostrar_estado(f"✅ Clips de Fal.ai ({modelo}) generados.", "green")
+
+    def generar_clips_hibrido_viral(self):
+        """
+        Estrategia Pro de Retención + Bajo Costo:
+        - Escena 1 (El Gancho de los primeros 5s): Se genera con Kling 3.0 Standard + Cámara Higgsfield Crash Zoom (~$0.42 USD).
+        - Escenas 2..N (Resto del video): Se completan gratis con Pexels/Pixabay HD (o Pollinations Flux + Ken Burns si no hay clip).
+        """
+        self.mostrar_estado("🔥 Iniciando Modo Híbrido Viral (Gancho Kling 3.0 + Resto Gratis)...", "yellow")
+        key_fal = self.entrada_fal.get().strip()
+        key_pexels = self.entrada_pexels.get().strip()
+        key_pixabay = self.entrada_pixabay.get().strip()
+        renderer = VideoRenderer(self.formato_actual)
+
+        prompts = self.prompts_visuales or self.keywords_actuales
+        keywords = self.keywords_actuales or self.prompts_visuales
+        total_escenas = max(len(prompts), len(keywords))
+
+        # 1. ESCENA 0 (EL GANCHO): Kling 3.0 Standard + Cámara Higgsfield
+        gancho_listo = False
+        if key_fal and prompts:
+            try:
+                fal = FalVideoService(key_fal)
+                modelo_kling3 = "Kling 3.0 Standard (~$0.42/clip - Top Cine)"
+                prompt_gancho = FalVideoService.aplicar_camara_higgsfield(
+                    prompts[0],
+                    "Crash Zoom (Impacto Brutal para Ganchos)",
+                    idx_escena=0,
+                )
+                ruta_gancho = os.path.join(self.CARPETA_ASSETS, "hibrido_00_GANCHO_KLING3.mp4")
+                self.mostrar_estado("🔥 Generando Gancho (Escena 1) con Kling 3.0 + Cámara Higgsfield...", "orange")
+                _, status_url, response_url = fal.iniciar_generacion(
+                    prompt_gancho, modelo_kling3, vertical=self.es_vertical
+                )
+                fal.esperar_y_descargar(status_url, response_url, ruta_gancho)
+                self.pool_videos.append(ruta_gancho)
+                gancho_listo = True
+            except Exception:
+                logging.exception("Fallback en Gancho Kling 3.0")
+
+        # 2. ESCENAS RESTANTES (o Escena 0 si no había API Key de Fal): Pexels/Pixabay Gratis -> Fallback Pollinations Flux Gratis
+        pexels = PexelsService(key_pexels) if key_pexels else None
+        pixabay = PixabayService(key_pixabay) if key_pixabay else None
+        ori = "portrait" if self.es_vertical else "landscape"
+
+        inicio_idx = 1 if gancho_listo else 0
+        for idx in range(inicio_idx, total_escenas):
+            kw = keywords[idx] if idx < len(keywords) else prompts[idx]
+            prompt_esc = prompts[idx] if idx < len(prompts) else kw
+            descargado = False
+
+            if pexels and (idx % 2 == 1 or not pixabay):
+                try:
+                    self.mostrar_estado(f"🔎 Híbrido Escena {idx + 1}/{total_escenas} (Pexels Gratis): {kw}...", "yellow")
+                    videos = pexels.buscar_videos(kw, 1, ori)
+                    if videos:
+                        url_hd = PexelsService.elegir_mejor_archivo(videos[0], vertical=self.es_vertical)
+                        if url_hd:
+                            nombre = os.path.join(self.CARPETA_ASSETS, f"hibrido_{idx:02d}_pexels.mp4")
+                            PexelsService.descargar(url_hd, nombre)
+                            self.pool_videos.append(nombre)
+                            descargado = True
+                except Exception:
+                    logging.exception("Fallback Pexels en modo híbrido")
+
+            if not descargado and pixabay:
+                try:
+                    self.mostrar_estado(f"🔎 Híbrido Escena {idx + 1}/{total_escenas} (Pixabay Gratis): {kw}...", "yellow")
+                    hits = pixabay.buscar_videos(kw, cantidad=3)
+                    if hits:
+                        url_hd = PixabayService.elegir_mejor_archivo(hits[0])
+                        if url_hd:
+                            nombre = os.path.join(self.CARPETA_ASSETS, f"hibrido_{idx:02d}_pixabay.mp4")
+                            PexelsService.descargar(url_hd, nombre)
+                            self.pool_videos.append(nombre)
+                            descargado = True
+                except Exception:
+                    logging.exception("Fallback Pixabay en modo híbrido")
+
+            if not descargado:
+                try:
+                    self.mostrar_estado(
+                        f"🎨 Híbrido Escena {idx + 1}/{total_escenas} (Pollinations Flux Gratis + Ken Burns)...",
+                        "yellow",
+                    )
+                    ruta_img = os.path.join(self.CARPETA_ASSETS, f"hibrido_{idx:02d}_flux.png")
+                    ruta_vid = os.path.join(self.CARPETA_ASSETS, f"hibrido_{idx:02d}_flux.mp4")
+                    prompt_cam = FalVideoService.aplicar_camara_higgsfield(
+                        prompt_esc, self.menu_camara_higgsfield.get(), idx_escena=idx
+                    )
+                    PollinationsService.generar_imagen_flux(prompt_cam, ruta_img, vertical=self.es_vertical)
+                    renderer.convertir_imagen_a_clip(ruta_img, ruta_vid, duracion=5)
+                    self.pool_videos.append(ruta_vid)
+                except Exception:
+                    logging.exception("Error fallback Pollinations en modo híbrido")
+
+        self.mostrar_estado("🔥 ¡Clips Modo Híbrido Viral (Gancho Kling 3.0 + Resto Gratis) listos!", "green")
 
     # ==========================================
     # PASO 3b: STORYBOARD (SINCRONIZADO POR ESCENA)
