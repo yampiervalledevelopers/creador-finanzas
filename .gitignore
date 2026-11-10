@@ -1,0 +1,18 @@
+# Credenciales y configuraciones privadas
+config_keys.json
+client_secret.json
+token.json
+.env
+
+# Caché y archivos temporales del proyecto
+cache_proyecto.json
+historial_serie.txt
+__pycache__/
+*.pyc
+
+# Archivos multimedia generados o descargados (pesados)
+*.mp4
+*.mp3
+*.wav
+*.mov
+*.avi
