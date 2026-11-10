@@ -1,5 +1,8 @@
 import customtkinter as ctk
 import threading
+import asyncio
+import subprocess
+import sys
 import json
 import os
 import re
@@ -135,21 +138,98 @@ class OpenAIService:
             f.write(image_bytes)
         return nombre_archivo
 
+    def generar_voz_tts(self, guion, ruta_salida, voz="onyx", modelo_tts="tts-1"):
+        """
+        Genera locución con OpenAI Audio TTS (~$0.015 por 1,000 caracteres: ~15x más barato que ElevenLabs).
+        Soporta guiones largos dividiendo automáticamente en bloques de 3,800 caracteres.
+        """
+        texto_limpio = re.sub(r"\[\s*PAUSA\s*\]", "... ", guion, flags=re.IGNORECASE)
+        texto_limpio = re.sub(r"\[[^\]]+\]", "", texto_limpio)
+        texto_limpio = re.sub(r"\s{2,}", " ", texto_limpio).strip()
+
+        bloques = ElevenLabsService.dividir_en_bloques(texto_limpio)
+        voz_id = voz.split()[0].lower() if voz else "onyx"
+
+        with open(ruta_salida, "wb") as f_out:
+            for bloque in bloques:
+                res = self.client.audio.speech.create(
+                    model=modelo_tts,
+                    voice=voz_id,
+                    input=bloque,
+                    response_format="mp3",
+                )
+                f_out.write(res.content)
+        return ruta_salida
+
+
+class EdgeTTSService:
+    """
+    Locución Neuronal de Microsoft Edge 100% GRATIS ($0.00), sin límite de caracteres y sin API Key.
+    Incluye las voces hispanas más virales para canales Faceless de finanzas y documentales.
+    """
+
+    VOCES_GRATIS = {
+        "Álvaro (España - Profunda / Viral TikTok)": "es-ES-AlvaroNeural",
+        "Jorge (México - Narrador Profesional)": "es-MX-JorgeNeural",
+        "Gonzalo (Colombia - Clara / Dinámica)": "es-CO-GonzaloNeural",
+        "Alonso (EE.UU. Latino - Documental Pro)": "es-US-AlonsoNeural",
+        "Tomás (Argentina - Cercana / Storytelling)": "es-AR-TomasNeural",
+        "Dalia (México - Femenina Ejecutiva)": "es-MX-DaliaNeural",
+    }
+
+    @classmethod
+    def asegurar_instalacion(cls):
+        try:
+            import edge_tts  # noqa: F401
+        except ImportError:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "edge-tts", "--quiet"])
+
+    @classmethod
+    def generar_voz(cls, guion, ruta_salida, nombre_voz=None, velocidad="+6%"):
+        cls.asegurar_instalacion()
+        import edge_tts
+
+        voz_id = cls.VOCES_GRATIS.get(nombre_voz, "es-ES-AlvaroNeural")
+        texto_limpio = re.sub(r"\[\s*PAUSA\s*\]", " ... ", guion, flags=re.IGNORECASE)
+        texto_limpio = re.sub(r"\[[^\]]+\]", "", texto_limpio)
+        texto_limpio = re.sub(r"\s{2,}", " ", texto_limpio).strip()
+
+        async def _guardar():
+            communicate = edge_tts.Communicate(texto_limpio, voz_id, rate=velocidad)
+            await communicate.save(ruta_salida)
+
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(_guardar())
+        finally:
+            loop.close()
+        return ruta_salida
+
 
 class ElevenLabsService:
     VOCES = {
         "Adam (Profunda / Narrador)": "pNInz6obpgDQGcFmaJgB",
+        "Brian (Grave / Documental Épico)": "nPczCjzI2devNBz1zQrb",
+        "Daniel (Autoridad / Finanzas y Noticias)": "onwK4e9ZLuTAKqWW03F9",
         "Antoni (Dinámica / Joven)": "ErXwobaYiN019PkySvjV",
-        "Arnold (Autoridad / Documental)": "VR6AewLTigWG4xSOukaG",
+        "Arnold (Fuerte / Cine)": "VR6AewLTigWG4xSOukaG",
         "Josh (Cálida / Storytelling)": "TxGEqnHWrfWFTfGW9XjX",
+    }
+    VOCES_OPENAI = {
+        "Onyx (OpenAI - Profunda / Lobo Wall Street)": "onyx",
+        "Echo (OpenAI - Cálida / Documental)": "echo",
+        "Ash (OpenAI - Dinámica / Directa)": "ash",
+        "Alloy (OpenAI - Neutra / Noticias)": "alloy",
+        "Nova (OpenAI - Femenina Enérgica)": "nova",
     }
     MAX_CHARS_POR_BLOQUE = 3800
 
-    def __init__(self, api_key, voice_id=None):
+    def __init__(self, api_key, voice_id=None, model_id="eleven_multilingual_v2"):
         if not api_key:
             raise ValueError("Falta la API key de ElevenLabs.")
         self.api_key = api_key
         self.voice_id = voice_id or self.VOCES["Adam (Profunda / Narrador)"]
+        self.model_id = model_id
 
     @staticmethod
     def limpiar_guion_para_tts(guion):
@@ -202,7 +282,7 @@ class ElevenLabsService:
             for idx, bloque in enumerate(bloques):
                 payload = {
                     "text": bloque,
-                    "model_id": "eleven_multilingual_v2",
+                    "model_id": self.model_id,
                     "voice_settings": {
                         "stability": 0.45,
                         "similarity_boost": 0.80,
@@ -903,10 +983,28 @@ class StudioApp(ctk.CTk):
         )
         self.menu_motor_ia.pack(padx=20, pady=5)
 
-        ctk.CTkLabel(frame_izq, text="🎙️ Voz ElevenLabs:").pack(anchor="w", padx=20, pady=(8, 0))
+        ctk.CTkLabel(
+            frame_izq, text="🎙️ Motor de Locución (Gratis / Pago por Uso):",
+            font=ctk.CTkFont(size=15, weight="bold"), text_color="#00E676",
+        ).pack(anchor="w", padx=20, pady=(12, 0))
+        self.menu_motor_voz = ctk.CTkOptionMenu(
+            frame_izq,
+            values=[
+                "Edge-TTS Neuronal (100% GRATIS - Sin Límites)",
+                "OpenAI TTS-1 (Ultra Barato ~$0.01/short)",
+                "OpenAI TTS-1-HD (Alta Definición ~$0.02/short)",
+                "ElevenLabs Flash v2.5 (50% Mitad de Precio)",
+                "ElevenLabs Multilingual v2 (Calidad Estudio)",
+            ],
+            width=300, fg_color="#00897B",
+            command=self.actualizar_voces_disponibles,
+        )
+        self.menu_motor_voz.pack(padx=20, pady=5)
+
+        ctk.CTkLabel(frame_izq, text="🗣️ Voz del Narrador:").pack(anchor="w", padx=20, pady=(5, 0))
         self.menu_voz_eleven = ctk.CTkOptionMenu(
             frame_izq,
-            values=list(ElevenLabsService.VOCES.keys()),
+            values=list(EdgeTTSService.VOCES_GRATIS.keys()),
             width=300, fg_color="#1976D2",
         )
         self.menu_voz_eleven.pack(padx=20, pady=5)
@@ -1062,6 +1160,18 @@ class StudioApp(ctk.CTk):
         self.guardar_cache()
         self.mostrar_estado("🧹 Pool de clips limpiado para nuevo video.", "yellow")
 
+    def actualizar_voces_disponibles(self, motor_elegido=None):
+        motor = motor_elegido or self.menu_motor_voz.get()
+        if motor.startswith("Edge-TTS"):
+            voces = list(EdgeTTSService.VOCES_GRATIS.keys())
+        elif motor.startswith("OpenAI"):
+            voces = list(ElevenLabsService.VOCES_OPENAI.keys())
+        else:
+            voces = list(ElevenLabsService.VOCES.keys())
+        self.menu_voz_eleven.configure(values=voces)
+        if self.menu_voz_eleven.get() not in voces:
+            self.menu_voz_eleven.set(voces[0])
+
     def guardar_keys(self):
         keys_data = {
             "openai": self.entrada_openai.get().strip(),
@@ -1073,6 +1183,7 @@ class StudioApp(ctk.CTk):
             "fal": self.entrada_fal.get().strip(),
             "replicate": self.entrada_replicate.get().strip(),
             "motor_ia": self.menu_motor_ia.get(),
+            "motor_voz": self.menu_motor_voz.get(),
             "voz_eleven": self.menu_voz_eleven.get(),
             "fuente_visual": self.menu_fuente_visual.get(),
             "modelo_fal": self.menu_modelo_fal.get(),
@@ -1111,7 +1222,10 @@ class StudioApp(ctk.CTk):
                 self.entrada_replicate.insert(0, k["replicate"])
             if k.get("motor_ia"):
                 self.menu_motor_ia.set(k["motor_ia"])
-            if k.get("voz_eleven") and k["voz_eleven"] in ElevenLabsService.VOCES:
+            if k.get("motor_voz"):
+                self.menu_motor_voz.set(k["motor_voz"])
+                self.actualizar_voces_disponibles(k["motor_voz"])
+            if k.get("voz_eleven"):
                 self.menu_voz_eleven.set(k["voz_eleven"])
             if k.get("fuente_visual"):
                 self.menu_fuente_visual.set(k["fuente_visual"])
@@ -1583,7 +1697,7 @@ REGLAS DE ORO:
             self.cambiar_estado_boton(self.btn_enviar_prompt, "normal")
 
     # ==========================================
-    # PASO 2: VOZ
+    # PASO 2: VOZ (MULTIMOTOR: GRATIS / OPENAI / ELEVENLABS)
     # ==========================================
     def ejecutar_paso2(self):
         guion = self.caja_guion.get("0.0", "end").strip()
@@ -1591,16 +1705,41 @@ REGLAS DE ORO:
             self.mostrar_estado("❌ Primero genera o escribe un guion.", "red")
             return
 
-        self.mostrar_estado("Grabando Voz con ElevenLabs (con pausas limpias)...", "yellow")
+        motor_voz = self.menu_motor_voz.get()
+        voz_seleccionada = self.menu_voz_eleven.get()
         self.cambiar_estado_boton(self.btn_paso2, "disabled")
         try:
-            voice_id = ElevenLabsService.VOCES.get(self.menu_voz_eleven.get())
-            service = ElevenLabsService(self.entrada_eleven.get().strip(), voice_id=voice_id)
-            service.generar_voz(guion, self.ARCHIVO_VOZ)
-            self.mostrar_estado("✅ Voz guardada con éxito.", "green")
+            if motor_voz.startswith("Edge-TTS"):
+                self.mostrar_estado(f"🎙️ Grabando Voz Neuronal GRATIS ({voz_seleccionada})...", "yellow")
+                EdgeTTSService.generar_voz(guion, self.ARCHIVO_VOZ, nombre_voz=voz_seleccionada)
+                self.mostrar_estado("✅ Voz Neuronal Gratis guardada con éxito ($0.00).", "green")
+
+            elif motor_voz.startswith("OpenAI"):
+                modelo_tts = "tts-1-hd" if "HD" in motor_voz else "tts-1"
+                voz_id = ElevenLabsService.VOCES_OPENAI.get(voz_seleccionada, "onyx")
+                self.mostrar_estado(f"🎙️ Grabando Voz con OpenAI {modelo_tts} ({voz_id})...", "yellow")
+                service = OpenAIService(self.entrada_openai.get().strip())
+                service.generar_voz_tts(guion, self.ARCHIVO_VOZ, voz=voz_id, modelo_tts=modelo_tts)
+                self.mostrar_estado(f"✅ Voz OpenAI ({modelo_tts}) guardada con éxito.", "green")
+
+            else:
+                model_id = "eleven_flash_v2_5" if "Flash" in motor_voz else "eleven_multilingual_v2"
+                voice_id = ElevenLabsService.VOCES.get(voz_seleccionada)
+                self.mostrar_estado(f"🎙️ Grabando Voz con ElevenLabs ({model_id})...", "yellow")
+                service = ElevenLabsService(
+                    self.entrada_eleven.get().strip(),
+                    voice_id=voice_id,
+                    model_id=model_id,
+                )
+                service.generar_voz(guion, self.ARCHIVO_VOZ)
+                self.mostrar_estado(f"✅ Voz ElevenLabs ({model_id}) guardada con éxito.", "green")
+
         except requests.HTTPError as e:
-            logging.exception("Error ElevenLabs")
-            self.mostrar_estado(f"❌ Error ElevenLabs (verifica saldo/API): {e}", "red")
+            logging.exception("Error HTTP en Voz")
+            self.mostrar_estado(
+                f"❌ Error ElevenLabs ({e}). Tip: Cambia el motor a 'Edge-TTS Gratis' o 'OpenAI TTS-1'.",
+                "red",
+            )
         except Exception as e:
             logging.exception("Error Voz")
             self.mostrar_estado(f"❌ Error Voz: {e}", "red")
