@@ -267,15 +267,185 @@ class OpenAIService:
         )
         return json.loads(res.choices[0].message.content)
 
+    def generar_guion_extra_largo(self, modelo, prompt_maestro, genero_key=None, callback_progreso=None):
+        """
+        Genera un guion EXTRA LARGO (3,200 a 4,200+ palabras reales, ~20-28 minutos)
+        dividiendo la creación en:
+        1) Diseño de Arquitectura de 5 Capítulos Documentales.
+        2) Redacción profunda e independiente de cada capítulo (650-850 palabras + 8 escenas por capítulo)
+           para romper el límite de tokens de salida de una sola petición de OpenAI.
+        """
+        info_genero = GENEROS_CANAL.get(
+            genero_key,
+            GENEROS_CANAL["💰 Finanzas, Negocios y Geopolítica"],
+        )
+        estilo_visual = info_genero["estilo_visual_ia"]
+
+        if callback_progreso:
+            callback_progreso("📐 Paso 1/6: Diseñando estructura de 5 Capítulos para el Mega-Documental...")
+
+        prompt_estructura = f"""Basado en esta solicitud del usuario:
+{prompt_maestro}
+
+Diseña la arquitectura maestra de un MEGA-DOCUMENTAL EXTENSO dividido en 5 CAPÍTULOS profundos que no se repitan entre sí:
+- Capítulo 1: El Gancho Brutal, el Misterio Central y por qué cambia todo.
+- Capítulo 2: El Origen Oculto, la Historia y las Raíces Profundas.
+- Capítulo 3: El Mecanismo Interno, Casos Reales, Pruebas y Detalles Inéditos.
+- Capítulo 4: El Clímax, el Giro Oscuro/Revelador y las Consecuencias Extremas.
+- Capítulo 5: El Impacto en el Futuro, Lección Magistral y Gran Cierre Épico.
+
+Devuelve ESTRICTAMENTE un JSON con:
+- 'titulo_seo': título viral de alto CTR para el documental completo.
+- 'descripcion_seo': descripción completa con marcas de tiempo aproximadas y hashtags.
+- 'capitulos': lista de 5 objetos, cada uno con:
+    - 'numero': 1 al 5
+    - 'titulo': título magnético del capítulo
+    - 'instrucciones_detalladas': qué debe desarrollar a fondo este capítulo sin repetir los demás."""
+
+        res_est = self.client.chat.completions.create(
+            model=modelo,
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"{info_genero['rol_guionista']} Respondes siempre en JSON válido.",
+                },
+                {"role": "user", "content": prompt_estructura},
+            ],
+        )
+        datos_est = json.loads(res_est.choices[0].message.content)
+        capitulos = datos_est.get("capitulos", [])
+        if not capitulos or len(capitulos) < 3:
+            capitulos = [
+                {"numero": i, "titulo": f"Parte {i}", "instrucciones_detalladas": f"Desarrolla a fondo el acto {i}."}
+                for i in range(1, 6)
+            ]
+
+        guion_total_partes = []
+        escenas_totales = []
+        keywords_totales = []
+        prompts_totales = []
+        resumen_previo = ""
+
+        for idx, cap in enumerate(capitulos, start=1):
+            num_cap = cap.get("numero", idx)
+            tit_cap = cap.get("titulo", f"Capítulo {idx}")
+            inst_cap = cap.get("instrucciones_detalladas", "")
+
+            if callback_progreso:
+                callback_progreso(
+                    f"✍️ Paso {idx + 1}/6: Escribiendo Capítulo {idx}/{len(capitulos)} ('{tit_cap[:35]}...')..."
+                )
+
+            regla_inicio = (
+                "Empieza en el segundo 0 con un GANCHO BRUTAL sin saludos genéricos."
+                if idx == 1
+                else "Continúa directamente el hilo narrativo del capítulo anterior SIN volver a saludar ni presentarte."
+            )
+            regla_cierre = (
+                info_genero["cierre_estructura"]
+                if idx == len(capitulos)
+                else "Deja un puente de intriga (cliffhanger) que conecte con el siguiente capítulo."
+            )
+
+            prompt_cap = f"""Estás escribiendo el CAPÍTULO {num_cap} de {len(capitulos)} de un Mega-Documental en Español.
+Título del Capítulo {num_cap}: "{tit_cap}"
+Qué debes desarrollar a fondo en este capítulo: {inst_cap}
+Tono obligatorio: {info_genero['instruccion_tono']}
+
+CONTEXTO DE LO YA NARRADO ANTES (NO LO REPITAS):
+{resumen_previo[-1800:] if resumen_previo else 'Este es el primer capítulo.'}
+
+REGLAS ESTRICTAS PARA ESTE CAPÍTULO:
+1. EXTENSIÓN: Escribe entre 650 y 850 palabras REALES en español solo para este capítulo. Prohibido resumir; incluye ejemplos concretos, datos, nombres, atmósfera y usa [PAUSA] para silencios dramáticos.
+2. INICIO: {regla_inicio}
+3. CIERRE DEL CAPÍTULO: {regla_cierre}
+4. ESCENAS VISUALES: Divide este capítulo en 8 escenas cronológicas.
+
+Devuelve ESTRICTAMENTE un objeto JSON con:
+- 'narracion_capitulo': (el texto completo de 650-850 palabras en ESPAÑOL de este capítulo)
+- 'escenas': (lista de 8 objetos ordenados cronológicamente, cada uno con:
+    - 'narracion': el párrafo o fragmento de este capítulo que se narra en esa escena,
+    - 'keyword_pexels': búsqueda concreta de 2 a 4 palabras en INGLÉS para video stock (evita palabras abstractas),
+    - 'prompt_ia': prompt cinematográfico detallado en INGLÉS con estilo "{estilo_visual}", sin texto ni marcas de agua)"""
+
+            res_cap = self.client.chat.completions.create(
+                model=modelo,
+                response_format={"type": "json_object"},
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            f"{info_genero['rol_guionista']} Escribes capítulos extensos, profundos y envolventes "
+                            f"sin resumir jamás. Respondes siempre en JSON válido."
+                        ),
+                    },
+                    {"role": "user", "content": prompt_cap},
+                ],
+            )
+            datos_cap = json.loads(res_cap.choices[0].message.content)
+            texto_cap = datos_cap.get("narracion_capitulo", "").strip()
+            escenas_cap = datos_cap.get("escenas", [])
+
+            if not texto_cap and escenas_cap:
+                texto_cap = " ".join(e.get("narracion", "") for e in escenas_cap).strip()
+
+            if texto_cap:
+                guion_total_partes.append(texto_cap)
+                resumen_previo += f"\n[Cap {num_cap}]: {texto_cap[:450]}..."
+
+            for e in escenas_cap:
+                escenas_totales.append(e)
+                if e.get("keyword_pexels"):
+                    keywords_totales.append(e["keyword_pexels"])
+                if e.get("prompt_ia"):
+                    prompts_totales.append(e["prompt_ia"])
+
+        guion_completo = "\n\n[PAUSA]\n\n".join(guion_total_partes)
+        return {
+            "guion_locucion": guion_completo,
+            "escenas": escenas_totales,
+            "keywords_visuales": keywords_totales,
+            "prompts_visuales": prompts_totales,
+            "titulo_seo": datos_est.get("titulo_seo", "Documental Completo"),
+            "descripcion_seo": datos_est.get("descripcion_seo", ""),
+        }
+
     def transcribir(self, ruta_audio, con_segmentos=False):
         granularities = ["segment", "word"] if con_segmentos else ["word"]
-        with open(ruta_audio, "rb") as audio_file:
-            return self.client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-                response_format="verbose_json",
-                timestamp_granularities=granularities,
-            )
+        ruta_enviar = ruta_audio
+        archivo_temp_ligero = None
+
+        # OpenAI Whisper tiene límite de 25 MB. Si el audio de un video EXTRA LARGO pesa > 22 MB,
+        # creamos una copia temporal comprimida a 16kHz / 48kbps para que nunca falle.
+        try:
+            if os.path.exists(ruta_audio) and os.path.getsize(ruta_audio) > 22 * 1024 * 1024:
+                archivo_temp_ligero = ruta_audio + "_whisper_16k.mp3"
+                clip_a = AudioFileClip(ruta_audio)
+                clip_a.write_audiofile(
+                    archivo_temp_ligero,
+                    fps=16000,
+                    nbytes=2,
+                    codec="libmp3lame",
+                    bitrate="48k",
+                    logger=None,
+                )
+                clip_a.close()
+                ruta_enviar = archivo_temp_ligero
+
+            with open(ruta_enviar, "rb") as audio_file:
+                return self.client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    response_format="verbose_json",
+                    timestamp_granularities=granularities,
+                )
+        finally:
+            if archivo_temp_ligero and os.path.exists(archivo_temp_ligero):
+                try:
+                    os.remove(archivo_temp_ligero)
+                except Exception:
+                    pass
 
     def detectar_momentos_virales(self, transcripcion_texto, duracion_total, num_clips=3, dur_min=15, dur_max=45):
         """
@@ -1311,6 +1481,18 @@ class StudioApp(ctk.CTk):
         return self.formato_actual == "SHORT"
 
     @property
+    def es_extra_largo(self):
+        return self.formato_actual == "EXTRA_LARGO"
+
+    def obtener_formato_seleccionado(self):
+        val = self.menu_formato.get() if hasattr(self, "menu_formato") else "SHORT"
+        if "SHORT" in val:
+            return "SHORT"
+        if "EXTRA LARGO" in val:
+            return "EXTRA_LARGO"
+        return "LARGO"
+
+    @property
     def info_genero_actual(self):
         genero_key = self.menu_genero.get() if hasattr(self, "menu_genero") else ""
         return GENEROS_CANAL.get(
@@ -1338,7 +1520,13 @@ class StudioApp(ctk.CTk):
         self.entrada_tema.pack(padx=20, pady=5)
 
         self.menu_formato = ctk.CTkOptionMenu(
-            frame_izq, values=["SHORT (Vertical)", "LARGO (Horizontal)"], width=300
+            frame_izq,
+            values=[
+                "SHORT (Vertical)",
+                "LARGO (Horizontal Normal)",
+                "EXTRA LARGO (Documental por Capítulos)",
+            ],
+            width=300,
         )
         self.menu_formato.pack(padx=20, pady=5)
 
@@ -2061,7 +2249,7 @@ class StudioApp(ctk.CTk):
             self.mostrar_estado("❌ Escribe un tema primero.", "red")
             return
 
-        self.formato_actual = "SHORT" if "SHORT" in self.menu_formato.get() else "LARGO"
+        self.formato_actual = self.obtener_formato_seleccionado()
         genero_nombre = self.menu_genero.get()
         info_gen = self.info_genero_actual
 
@@ -2073,14 +2261,28 @@ class StudioApp(ctk.CTk):
    - NUDO: Desarrolla la historia/conflicto con ritmo trepidante y tensión constante.
    - DESENLACE: {info_gen['cierre_estructura']}"""
             num_keywords = "6 a 10"
+            etiqueta_modo = ""
+        elif self.es_extra_largo:
+            reglas_formato = f"""2. MODO EXTRA LARGO POR CAPÍTULOS (DOCUMENTAL EXTENSO DE 20 A 28 MINUTOS):
+   - El sistema redactará este documental en 5 CAPÍTULOS PROFUNDOS independientes (650 a 850 palabras por capítulo = ~3,500 a 4,200 palabras reales en total y 40 escenas visuales).
+3. TONO DEL GÉNERO ({genero_nombre}): {info_gen['instruccion_tono']}
+4. ESTRUCTURA DOCUMENTAL DE 5 ACTOS:
+   - CAPÍTULO 1: Gancho brutal, planteamiento del misterio/problema central y promesa de revelación.
+   - CAPÍTULO 2: El origen oculto, antecedentes históricos y contexto profundo.
+   - CAPÍTULO 3: Análisis exhaustivo, casos reales con nombres y fechas, mecanismos internos.
+   - CAPÍTULO 4: El clímax, giro inesperado, pruebas contundentes y consecuencias extremas.
+   - CAPÍTULO 5: El impacto en el futuro y cierre magistral ({info_gen['cierre_estructura']})."""
+            num_keywords = "40 (8 por cada uno de los 5 capítulos)"
+            etiqueta_modo = "[MODO EXTRA LARGO POR CAPÍTULOS]\n"
         else:
-            reglas_formato = f"""2. LONGITUD: Escribe un guion MUY EXTENSO de 1600 a 1800 palabras (12 min). Usa [PAUSA] para silencios dramáticos.
+            reglas_formato = f"""2. LONGITUD: Escribe un guion MUY EXTENSO de 1600 a 1800 palabras (10-12 min). Usa [PAUSA] para silencios dramáticos.
 3. TONO DEL GÉNERO ({genero_nombre}): {info_gen['instruccion_tono']}
 4. ESTRUCTURA:
    - GANCHO: Revelación o escena inicial brutal.
    - NUDO: Explica TODOS los detalles, atmósfera y giros explícitamente. Desarrolla a fondo.
    - DESENLACE: {info_gen['cierre_estructura']}"""
             num_keywords = "15 a 20"
+            etiqueta_modo = ""
 
         inyeccion_serie = ""
         if self.switch_serie.get() == 1 and os.path.exists(self.ARCHIVO_HISTORIAL):
@@ -2094,7 +2296,7 @@ class StudioApp(ctk.CTk):
                 f"del episodio anterior y crea un misterio completamente nuevo para este episodio."
             )
 
-        prompt_base = f"""{info_gen['rol_guionista']}
+        prompt_base = f"""{etiqueta_modo}{info_gen['rol_guionista']}
 Tu tema o idea para este episodio es: '{tema}'.
 
 REGLAS DE ORO:
@@ -2115,7 +2317,10 @@ REGLAS DE ORO:
 
         self.after(0, lambda: self.caja_prompt.delete("0.0", "end"))
         self.after(0, lambda: self.caja_prompt.insert("0.0", prompt_base))
-        self.mostrar_estado(f"✅ Mega-Prompt creado para el género: {genero_nombre}", "yellow")
+        self.mostrar_estado(
+            f"✅ Mega-Prompt ({self.formato_actual}) creado para: {genero_nombre}",
+            "yellow",
+        )
 
     # ==========================================
     # PASO 1b: ENVIAR A OPENAI
@@ -2126,12 +2331,23 @@ REGLAS DE ORO:
             self.mostrar_estado("❌ Primero genera el prompt.", "red")
             return
 
-        self.mostrar_estado("Enviando a OpenAI... diseñando guion y escenas sincronizadas...", "orange")
+        self.formato_actual = self.obtener_formato_seleccionado()
         self.cambiar_estado_boton(self.btn_enviar_prompt, "disabled")
         try:
             service = OpenAIService(self.entrada_openai.get().strip())
             modelo = self.menu_motor_ia.get().split()[0]
-            datos = service.generar_guion(modelo, prompt_final, genero_key=self.menu_genero.get())
+
+            if self.es_extra_largo or "[MODO EXTRA LARGO POR CAPÍTULOS]" in prompt_final:
+                self.formato_actual = "EXTRA_LARGO"
+                datos = service.generar_guion_extra_largo(
+                    modelo,
+                    prompt_final,
+                    genero_key=self.menu_genero.get(),
+                    callback_progreso=lambda msg: self.mostrar_estado(msg, "orange"),
+                )
+            else:
+                self.mostrar_estado("Enviando a OpenAI... diseñando guion y escenas sincronizadas...", "orange")
+                datos = service.generar_guion(modelo, prompt_final, genero_key=self.menu_genero.get())
 
             self.escenas_guion = datos.get("escenas", [])
             self.keywords_actuales = datos.get("keywords_visuales", [])
@@ -2167,8 +2383,9 @@ REGLAS DE ORO:
                 f.write(guion_generado)
 
             self.guardar_cache()
+            num_palabras = len(guion_generado.split())
             self.mostrar_estado(
-                f"✅ Guion y {len(self.escenas_guion) or len(self.keywords_actuales)} escenas sincronizadas listas.",
+                f"✅ Guion ({num_palabras} palabras) y {len(self.escenas_guion) or len(self.keywords_actuales)} escenas listas.",
                 "green",
             )
         except Exception as e:
@@ -2274,7 +2491,8 @@ REGLAS DE ORO:
         self.mostrar_estado("Buscando clips HD en Pexels en orden de escena...", "yellow")
         service = PexelsService(self.entrada_pexels.get().strip())
         ori = "portrait" if self.es_vertical else "landscape"
-        cantidad = 1 if self.es_vertical else 2
+        cantidad = 1 if self.es_vertical else (3 if self.es_extra_largo else 2)
+        urls_descargadas = set()
 
         for idx_kw, kw in enumerate(self.keywords_actuales):
             try:
@@ -2282,30 +2500,36 @@ REGLAS DE ORO:
                     f"🔎 Pexels escena {idx_kw + 1}/{len(self.keywords_actuales)}: {kw}...",
                     "yellow",
                 )
-                videos = service.buscar_videos(kw, cantidad, ori)
+                videos = service.buscar_videos(kw, max(cantidad + 2, 4), ori)
             except Exception:
                 logging.exception("Error buscando %s en Pexels", kw)
                 continue
+            descargados_escena = 0
             for i, v in enumerate(videos):
+                if descargados_escena >= cantidad:
+                    break
                 nombre = os.path.join(
                     self.CARPETA_ASSETS,
                     f"escena_{idx_kw:02d}_{limpiar_nombre(kw)}_{i}.mp4",
                 )
                 try:
                     url_hd = PexelsService.elegir_mejor_archivo(v, vertical=self.es_vertical)
-                    if not url_hd:
+                    if not url_hd or url_hd in urls_descargadas:
                         continue
                     PexelsService.descargar(url_hd, nombre)
+                    urls_descargadas.add(url_hd)
                     if nombre not in self.pool_videos:
                         self.pool_videos.append(nombre)
+                    descargados_escena += 1
                 except Exception:
                     logging.exception("Error descargando clip de Pexels")
-        self.mostrar_estado("✅ Clips HD de Pexels descargados en orden narrativo.", "green")
+        self.mostrar_estado(f"✅ {len(self.pool_videos)} Clips HD únicos de Pexels descargados.", "green")
 
     def generar_clips_pixabay(self):
         self.mostrar_estado("Buscando clips HD en Pixabay (100% Gratis)...", "yellow")
         service = PixabayService(self.entrada_pixabay.get().strip())
-        cantidad = 1 if self.es_vertical else 2
+        cantidad = 1 if self.es_vertical else (3 if self.es_extra_largo else 2)
+        urls_descargadas = set()
 
         for idx_kw, kw in enumerate(self.keywords_actuales):
             try:
@@ -2313,25 +2537,30 @@ REGLAS DE ORO:
                     f"🔎 Pixabay escena {idx_kw + 1}/{len(self.keywords_actuales)}: {kw}...",
                     "yellow",
                 )
-                hits = service.buscar_videos(kw, cantidad=3)
+                hits = service.buscar_videos(kw, cantidad=max(cantidad + 2, 5))
             except Exception:
                 logging.exception("Error buscando %s en Pixabay", kw)
                 continue
-            for i, h in enumerate(hits[:cantidad]):
+            descargados_escena = 0
+            for i, h in enumerate(hits):
+                if descargados_escena >= cantidad:
+                    break
                 nombre = os.path.join(
                     self.CARPETA_ASSETS,
                     f"pixabay_{idx_kw:02d}_{limpiar_nombre(kw)}_{i}.mp4",
                 )
                 try:
                     url_hd = PixabayService.elegir_mejor_archivo(h)
-                    if not url_hd:
+                    if not url_hd or url_hd in urls_descargadas:
                         continue
                     PexelsService.descargar(url_hd, nombre)
+                    urls_descargadas.add(url_hd)
                     if nombre not in self.pool_videos:
                         self.pool_videos.append(nombre)
+                    descargados_escena += 1
                 except Exception:
                     logging.exception("Error descargando clip de Pixabay")
-        self.mostrar_estado("✅ Clips HD de Pixabay descargados en orden narrativo.", "green")
+        self.mostrar_estado(f"✅ {len(self.pool_videos)} Clips HD únicos de Pixabay descargados.", "green")
 
     def generar_clips_combo_gratis(self):
         """Alterna y respalda automáticamente entre Pexels y Pixabay para máxima variedad a costo $0."""
@@ -2344,14 +2573,16 @@ REGLAS DE ORO:
         pexels = PexelsService(key_pexels) if key_pexels else None
         pixabay = PixabayService(key_pixabay) if key_pixabay else None
         ori = "portrait" if self.es_vertical else "landscape"
+        clips_por_escena = 1 if self.es_vertical else (2 if self.es_extra_largo else 1)
+        urls_descargadas = set()
 
         for idx_kw, kw in enumerate(self.keywords_actuales):
-            descargado = False
+            descargados_escena = 0
             usar_pixabay_primero = (idx_kw % 2 == 1) and (pixabay is not None)
             orden_fuentes = ["pixabay", "pexels"] if usar_pixabay_primero else ["pexels", "pixabay"]
 
             for fuente in orden_fuentes:
-                if descargado:
+                if descargados_escena >= clips_por_escena:
                     break
                 if fuente == "pexels" and pexels:
                     try:
@@ -2359,17 +2590,20 @@ REGLAS DE ORO:
                             f"🔎 Combo Gratis [{idx_kw + 1}/{len(self.keywords_actuales)}] Pexels: {kw}...",
                             "yellow",
                         )
-                        videos = pexels.buscar_videos(kw, 1, ori)
-                        if videos:
-                            url_hd = PexelsService.elegir_mejor_archivo(videos[0], vertical=self.es_vertical)
-                            if url_hd:
+                        videos = pexels.buscar_videos(kw, 4, ori)
+                        for i_v, vid in enumerate(videos):
+                            if descargados_escena >= clips_por_escena:
+                                break
+                            url_hd = PexelsService.elegir_mejor_archivo(vid, vertical=self.es_vertical)
+                            if url_hd and url_hd not in urls_descargadas:
                                 nombre = os.path.join(
                                     self.CARPETA_ASSETS,
-                                    f"combo_{idx_kw:02d}_pexels_{limpiar_nombre(kw)}.mp4",
+                                    f"combo_{idx_kw:02d}_pexels_{i_v}_{limpiar_nombre(kw)}.mp4",
                                 )
                                 PexelsService.descargar(url_hd, nombre)
+                                urls_descargadas.add(url_hd)
                                 self.pool_videos.append(nombre)
-                                descargado = True
+                                descargados_escena += 1
                     except Exception:
                         logging.exception("Fallback de Pexels en Combo Gratis")
                 elif fuente == "pixabay" and pixabay:
@@ -2378,21 +2612,24 @@ REGLAS DE ORO:
                             f"🔎 Combo Gratis [{idx_kw + 1}/{len(self.keywords_actuales)}] Pixabay: {kw}...",
                             "yellow",
                         )
-                        hits = pixabay.buscar_videos(kw, cantidad=3)
-                        if hits:
-                            url_hd = PixabayService.elegir_mejor_archivo(hits[0])
-                            if url_hd:
+                        hits = pixabay.buscar_videos(kw, cantidad=4)
+                        for i_h, hit in enumerate(hits):
+                            if descargados_escena >= clips_por_escena:
+                                break
+                            url_hd = PixabayService.elegir_mejor_archivo(hit)
+                            if url_hd and url_hd not in urls_descargadas:
                                 nombre = os.path.join(
                                     self.CARPETA_ASSETS,
-                                    f"combo_{idx_kw:02d}_pixabay_{limpiar_nombre(kw)}.mp4",
+                                    f"combo_{idx_kw:02d}_pixabay_{i_h}_{limpiar_nombre(kw)}.mp4",
                                 )
                                 PexelsService.descargar(url_hd, nombre)
+                                urls_descargadas.add(url_hd)
                                 self.pool_videos.append(nombre)
-                                descargado = True
+                                descargados_escena += 1
                     except Exception:
                         logging.exception("Fallback de Pixabay en Combo Gratis")
 
-        self.mostrar_estado("✅ Clips Combo Gratis HD (Pexels + Pixabay) listos.", "green")
+        self.mostrar_estado(f"✅ {len(self.pool_videos)} Clips Combo Gratis HD listos.", "green")
 
     def generar_clips_pollinations(self):
         """Genera escenas con IA Flux 100% GRATIS ($0) en Pollinations y las anima con Ken Burns."""
@@ -2678,17 +2915,25 @@ REGLAS DE ORO:
             tiempo_act = 0.0
             orden = 1
             idx_clip = 0
+            max_corte = 7.5 if self.es_extra_largo else 6.0
 
             while tiempo_act < self.duracion_total_audio - 0.05:
                 video_elegido = self.pool_videos[idx_clip % len(self.pool_videos)]
                 narracion_asociada = ""
 
-                if pesos_escenas and idx_clip < len(pesos_escenas) and total_palabras > 0:
-                    proporcion = pesos_escenas[idx_clip] / total_palabras
-                    duracion_objetivo = max(2.2, min(6.0, self.duracion_total_audio * proporcion))
-                    narracion_asociada = textos_escenas[idx_clip]
+                if pesos_escenas and total_palabras > 0:
+                    # Calculamos qué escena corresponde al progreso actual del audio
+                    progreso = min(0.999, tiempo_act / max(0.1, self.duracion_total_audio))
+                    idx_escena_actual = min(len(pesos_escenas) - 1, int(progreso * len(pesos_escenas)))
+                    narracion_asociada = textos_escenas[idx_escena_actual]
+
+                    if len(self.pool_videos) <= len(pesos_escenas) and idx_clip < len(pesos_escenas):
+                        proporcion = pesos_escenas[idx_clip] / total_palabras
+                        duracion_objetivo = max(2.2, min(max_corte, self.duracion_total_audio * proporcion))
+                    else:
+                        duracion_objetivo = max(3.0, min(max_corte, self.duracion_total_audio / max(1, num_bloques)))
                 else:
-                    duracion_objetivo = max(2.5, min(4.5, self.duracion_total_audio / max(1, num_bloques)))
+                    duracion_objetivo = max(2.5, min(max_corte, self.duracion_total_audio / max(1, num_bloques)))
 
                 corte = min(duracion_objetivo, self.duracion_total_audio - tiempo_act)
                 clip_b = VideoFileClip(video_elegido)
