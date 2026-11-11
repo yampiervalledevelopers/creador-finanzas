@@ -1425,6 +1425,287 @@ class VideoRenderer:
 # ==========================================
 # APLICACIÓN PRINCIPAL
 # ==========================================
+class ReproductorAudioMCI:
+    """
+    Reproductor de audio nativo de Windows (winmm / MCI) sin dependencias extra.
+    Permite reproducir MP3/WAV, pausar y saltar a cualquier milisegundo (para sincronizar con el video).
+    """
+
+    def __init__(self, ruta_audio):
+        self.alias = f"audio_prev_{id(self)}"
+        self.abierto = False
+        self.disponible = False
+        try:
+            import ctypes
+            self._mci = ctypes.windll.winmm.mciSendStringW
+            self.disponible = True
+        except Exception:
+            self._mci = None
+            return
+        if ruta_audio and os.path.exists(ruta_audio):
+            ruta_abs = os.path.abspath(ruta_audio)
+            if self._cmd(f'open "{ruta_abs}" type mpegvideo alias {self.alias}') == 0:
+                self._cmd(f"set {self.alias} time format milliseconds")
+                self.abierto = True
+
+    def _cmd(self, comando):
+        if not self._mci:
+            return -1
+        try:
+            return self._mci(comando, None, 0, None)
+        except Exception:
+            logging.exception("Error MCI: %s", comando)
+            return -1
+
+    def reproducir_desde(self, segundos):
+        if self.abierto:
+            self._cmd(f"play {self.alias} from {int(max(0.0, segundos) * 1000)}")
+
+    def pausar(self):
+        if self.abierto:
+            self._cmd(f"pause {self.alias}")
+
+    def detener(self):
+        if self.abierto:
+            self._cmd(f"stop {self.alias}")
+
+    def cerrar(self):
+        if self.abierto:
+            self._cmd(f"close {self.alias}")
+            self.abierto = False
+
+
+class VentanaPrevisualizacion(ctk.CTkToplevel):
+    """
+    Reproductor de Previsualización en Vivo:
+    Reproduce los segmentos del Storyboard (o un clip suelto) en tiempo real, sincronizados con la voz,
+    con controles de Play / Pausa / Reiniciar y barra de progreso para saltar a cualquier punto.
+    No renderiza nada: lee los fotogramas directamente de los clips (rápido y sin gastar disco).
+    """
+
+    FPS_PREVIEW = 15
+
+    def __init__(self, master, segmentos, ruta_audio=None, vertical=True, titulo="Previsualización",
+                 extraer_audio_de=None):
+        super().__init__(master)
+        self.title(f"▶️ {titulo}")
+        self.segmentos = [s for s in segmentos if s.get("archivo") and os.path.exists(s["archivo"])]
+        self.duracion_total = sum(s["duracion"] for s in self.segmentos) if self.segmentos else 0.0
+        self.vertical = vertical
+        self.ancho_disp, self.alto_disp = (360, 640) if vertical else (854, 480)
+        self.cache_clips = {}
+        self.reproduciendo = False
+        self.posicion = 0.0
+        self.inicio_reloj = 0.0
+        self.foto_actual = None
+        self.cerrado = False
+        self.arrastrando_slider = False
+        self.audio = ReproductorAudioMCI(ruta_audio) if ruta_audio else None
+
+        self.geometry(f"{self.ancho_disp + 40}x{self.alto_disp + 190}")
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+        self.after(400, lambda: self.attributes("-topmost", False))
+        self.protocol("WM_DELETE_WINDOW", self.cerrar)
+
+        self.lienzo = ctk.CTkLabel(
+            self, text="Cargando previsualización...", width=self.ancho_disp, height=self.alto_disp,
+            fg_color="#000000",
+        )
+        self.lienzo.pack(padx=20, pady=(15, 5))
+
+        self.lbl_narracion = ctk.CTkLabel(
+            self, text="", wraplength=self.ancho_disp, text_color="#FFD54F",
+            font=ctk.CTkFont(size=12, weight="bold"), height=36,
+        )
+        self.lbl_narracion.pack(padx=20)
+
+        self.slider = ctk.CTkSlider(
+            self, from_=0, to=max(0.1, self.duracion_total), width=self.ancho_disp,
+            command=self._al_mover_slider,
+        )
+        self.slider.set(0)
+        self.slider.pack(padx=20, pady=4)
+        self.slider.bind("<ButtonPress-1>", lambda e: setattr(self, "arrastrando_slider", True))
+        self.slider.bind("<ButtonRelease-1>", self._al_soltar_slider)
+
+        fila = ctk.CTkFrame(self, fg_color="transparent")
+        fila.pack(fill="x", padx=20, pady=4)
+        self.btn_play = ctk.CTkButton(fila, text="▶️ Play", width=110, fg_color="#2E7D32", command=self.alternar_play)
+        self.btn_play.pack(side="left", padx=3)
+        ctk.CTkButton(fila, text="⏮️ Reiniciar", width=110, fg_color="#455A64", command=self.reiniciar).pack(
+            side="left", padx=3
+        )
+        self.lbl_tiempo = ctk.CTkLabel(fila, text=self._formato_tiempo(0))
+        self.lbl_tiempo.pack(side="right", padx=3)
+
+        if not self.segmentos:
+            self.lienzo.configure(text="❌ No hay clips válidos para previsualizar.")
+            return
+
+        if extraer_audio_de:
+            self.btn_play.configure(state="disabled", text="⏳ Audio...")
+            threading.Thread(target=self._preparar_audio_clip, args=(extraer_audio_de,), daemon=True).start()
+
+        self._mostrar_frame(0.0)
+
+    # ---------- utilidades ----------
+    def _formato_tiempo(self, t):
+        total = self.duracion_total
+        return f"{int(t // 60):02d}:{int(t % 60):02d} / {int(total // 60):02d}:{int(total % 60):02d}"
+
+    def _preparar_audio_clip(self, ruta_video):
+        ruta_lista = None
+        try:
+            ruta_tmp = os.path.join("assets_generados", f"_preview_audio_{int(time.time())}.mp3")
+            os.makedirs("assets_generados", exist_ok=True)
+            clip = VideoFileClip(ruta_video)
+            if clip.audio is not None:
+                clip.audio.write_audiofile(ruta_tmp, logger=None)
+                self.ruta_audio_temporal = ruta_tmp
+                ruta_lista = ruta_tmp
+            clip.close()
+        except Exception:
+            logging.exception("No se pudo extraer audio para la previsualización")
+
+        def _activar():
+            if self.cerrado:
+                return
+            if ruta_lista:
+                self.audio = ReproductorAudioMCI(ruta_lista)
+            self.btn_play.configure(state="normal", text="▶️ Play")
+
+        self.after(0, _activar)
+
+    def _obtener_clip(self, ruta):
+        if ruta not in self.cache_clips:
+            alto_carga = self.alto_disp if self.vertical else self.alto_disp
+            self.cache_clips[ruta] = VideoFileClip(ruta, audio=False, target_resolution=(alto_carga, None))
+        return self.cache_clips[ruta]
+
+    def _segmento_en(self, t):
+        acumulado = 0.0
+        for seg in self.segmentos:
+            if t < acumulado + seg["duracion"]:
+                return seg, t - acumulado
+            acumulado += seg["duracion"]
+        ultimo = self.segmentos[-1]
+        return ultimo, max(0.0, ultimo["duracion"] - 0.05)
+
+    def _mostrar_frame(self, t):
+        try:
+            seg, t_local = self._segmento_en(t)
+            clip = self._obtener_clip(seg["archivo"])
+            t_clip = seg.get("offset", 0.0) + t_local
+            if clip.duration and clip.duration > 0:
+                t_clip = t_clip % max(0.05, clip.duration - 0.05)
+            frame = clip.get_frame(t_clip)
+            img = PIL.Image.fromarray(frame)
+
+            # Reencuadre centrado igual que el render final (9:16 o 16:9)
+            ratio_obj = self.ancho_disp / self.alto_disp
+            w, h = img.size
+            if (w / h) > ratio_obj:
+                nuevo_w = int(h * ratio_obj)
+                x1 = (w - nuevo_w) // 2
+                img = img.crop((x1, 0, x1 + nuevo_w, h))
+            else:
+                nuevo_h = int(w / ratio_obj)
+                y1 = (h - nuevo_h) // 2
+                img = img.crop((0, y1, w, y1 + nuevo_h))
+            img = img.resize((self.ancho_disp, self.alto_disp), PIL.Image.Resampling.BILINEAR)
+
+            self.foto_actual = ctk.CTkImage(light_image=img, dark_image=img, size=(self.ancho_disp, self.alto_disp))
+            self.lienzo.configure(image=self.foto_actual, text="")
+            narr = seg.get("narracion", "")
+            self.lbl_narracion.configure(text=f"🗣️ {narr[:140]}" if narr else "")
+            self.lbl_tiempo.configure(text=self._formato_tiempo(t))
+            if not self.arrastrando_slider:
+                self.slider.set(t)
+        except Exception:
+            logging.exception("Error mostrando fotograma de previsualización")
+
+    # ---------- controles ----------
+    def alternar_play(self):
+        if self.reproduciendo:
+            self.pausar()
+        else:
+            self.reproducir()
+
+    def reproducir(self):
+        if not self.segmentos:
+            return
+        if self.posicion >= self.duracion_total - 0.05:
+            self.posicion = 0.0
+        self.reproduciendo = True
+        self.inicio_reloj = time.perf_counter() - self.posicion
+        if self.audio:
+            self.audio.reproducir_desde(self.posicion)
+        self.btn_play.configure(text="⏸️ Pausa", fg_color="#F9A825")
+        self._tick()
+
+    def pausar(self):
+        self.reproduciendo = False
+        if self.audio:
+            self.audio.pausar()
+        self.btn_play.configure(text="▶️ Play", fg_color="#2E7D32")
+
+    def reiniciar(self):
+        estaba = self.reproduciendo
+        self.pausar()
+        self.posicion = 0.0
+        self._mostrar_frame(0.0)
+        if estaba:
+            self.reproducir()
+
+    def _al_mover_slider(self, valor):
+        if not self.reproduciendo:
+            self.posicion = float(valor)
+            self._mostrar_frame(self.posicion)
+
+    def _al_soltar_slider(self, _evento=None):
+        self.arrastrando_slider = False
+        estaba = self.reproduciendo
+        if estaba:
+            self.pausar()
+        self.posicion = float(self.slider.get())
+        self._mostrar_frame(self.posicion)
+        if estaba:
+            self.reproducir()
+
+    def _tick(self):
+        if not self.reproduciendo or self.cerrado:
+            return
+        self.posicion = time.perf_counter() - self.inicio_reloj
+        if self.posicion >= self.duracion_total:
+            self.posicion = self.duracion_total
+            self._mostrar_frame(max(0.0, self.duracion_total - 0.05))
+            self.pausar()
+            return
+        self._mostrar_frame(self.posicion)
+        self.after(int(1000 / self.FPS_PREVIEW), self._tick)
+
+    def cerrar(self):
+        self.cerrado = True
+        self.reproduciendo = False
+        if self.audio:
+            self.audio.detener()
+            self.audio.cerrar()
+        for clip in self.cache_clips.values():
+            try:
+                clip.close()
+            except Exception:
+                pass
+        self.cache_clips = {}
+        ruta_tmp = getattr(self, "ruta_audio_temporal", None)
+        if ruta_tmp and os.path.exists(ruta_tmp):
+            try:
+                os.remove(ruta_tmp)
+            except Exception:
+                pass
+        self.destroy()
+
+
 class StudioApp(ctk.CTk):
     ARCHIVO_VOZ = "voz_temp.mp3"
     ARCHIVO_KEYS = "config_keys.json"
@@ -1953,6 +2234,11 @@ class StudioApp(ctk.CTk):
         self.timeline_ui.pack(fill="both", expand=True, padx=5, pady=5)
         frame_btn_exportar = ctk.CTkFrame(self.tab_timeline, fg_color="transparent")
         frame_btn_exportar.pack(fill="x", padx=5, pady=5)
+        self.btn_preview_timeline = ctk.CTkButton(
+            frame_btn_exportar, text="▶️ Previsualizar Video (En Vivo)",
+            command=self.abrir_previsualizacion_timeline, fg_color="#00897B",
+        )
+        self.btn_preview_timeline.pack(side="left", expand=True, padx=5)
         self.btn_exp_mp4 = ctk.CTkButton(
             frame_btn_exportar, text="⬇️ Exportar MP4 Final",
             command=self.hilo_exportar_mp4, fg_color="#F44336", state="disabled",
@@ -2107,7 +2393,77 @@ class StudioApp(ctk.CTk):
             command=self.hilo_generar_timeline, fg_color="#607D8B",
         )
         self.btn_paso4.grid(row=0, column=2, padx=5, pady=5, sticky="ew")
-        frame_flujo.columnconfigure((0, 1, 2), weight=1)
+        self.btn_escuchar_voz = ctk.CTkButton(
+            frame_flujo, text="🔊 Escuchar Voz",
+            command=self.alternar_escuchar_voz, fg_color="#6A1B9A",
+        )
+        self.btn_escuchar_voz.grid(row=0, column=3, padx=5, pady=5, sticky="ew")
+        frame_flujo.columnconfigure((0, 1, 2, 3), weight=1)
+
+    # ==========================================
+    # PREVISUALIZACIÓN EN VIVO
+    # ==========================================
+    def abrir_previsualizacion_timeline(self):
+        if not self.timeline_data:
+            self.mostrar_estado("❌ Primero crea el Storyboard (Paso 3) para previsualizar.", "red")
+            return
+        segmentos = [
+            {
+                "archivo": item["archivo"],
+                "duracion": item["duracion"],
+                "narracion": item.get("narracion", ""),
+            }
+            for item in self.timeline_data
+        ]
+        ruta_audio = self.ARCHIVO_VOZ if os.path.exists(self.ARCHIVO_VOZ) else None
+        VentanaPrevisualizacion(
+            self,
+            segmentos,
+            ruta_audio=ruta_audio,
+            vertical=self.es_vertical,
+            titulo=f"Previsualización Storyboard ({self.duracion_total_audio:.0f}s)",
+        )
+        self.mostrar_estado("▶️ Previsualización abierta (los subtítulos se queman al exportar).", "#00E5FF")
+
+    def previsualizar_clip(self, ruta, con_audio_propio=False):
+        if not ruta or not os.path.exists(ruta):
+            self.mostrar_estado("❌ El clip no existe.", "red")
+            return
+        try:
+            clip = VideoFileClip(ruta, audio=False)
+            duracion = clip.duration or 1.0
+            ancho, alto = clip.w, clip.h
+            clip.close()
+        except Exception as e:
+            self.mostrar_estado(f"❌ No se pudo abrir el clip: {e}", "red")
+            return
+        VentanaPrevisualizacion(
+            self,
+            [{"archivo": ruta, "duracion": duracion, "narracion": ""}],
+            vertical=alto >= ancho,
+            titulo=os.path.basename(ruta),
+            extraer_audio_de=ruta if con_audio_propio else None,
+        )
+
+    def alternar_escuchar_voz(self):
+        reproductor = getattr(self, "reproductor_voz", None)
+        if reproductor:
+            reproductor.detener()
+            reproductor.cerrar()
+            self.reproductor_voz = None
+            self.btn_escuchar_voz.configure(text="🔊 Escuchar Voz", fg_color="#6A1B9A")
+            return
+        if not os.path.exists(self.ARCHIVO_VOZ):
+            self.mostrar_estado("❌ Aún no has grabado la voz (Paso 2).", "red")
+            return
+        self.reproductor_voz = ReproductorAudioMCI(self.ARCHIVO_VOZ)
+        if not self.reproductor_voz.abierto:
+            self.reproductor_voz = None
+            self.mostrar_estado("❌ No se pudo reproducir el audio en este equipo.", "red")
+            return
+        self.reproductor_voz.reproducir_desde(0)
+        self.btn_escuchar_voz.configure(text="⏹️ Detener Voz", fg_color="#C62828")
+        self.mostrar_estado("🔊 Reproduciendo la locución grabada...", "#00E5FF")
 
     # ==========================================
     # UI Y STORYBOARD
@@ -2123,6 +2479,10 @@ class StudioApp(ctk.CTk):
                 fila, text="❌", width=40, fg_color="#D32F2F",
                 command=lambda r=ruta: self.eliminar_clip(r),
             ).pack(side="right", padx=5)
+            ctk.CTkButton(
+                fila, text="▶️ Ver", width=60, fg_color="#00897B",
+                command=lambda r=ruta: self.previsualizar_clip(r),
+            ).pack(side="right", padx=2)
 
     def eliminar_clip(self, ruta):
         if ruta in self.pool_videos:
@@ -2200,6 +2560,10 @@ class StudioApp(ctk.CTk):
                 frame_controles, text="🔄 Cambiar", width=60, fg_color="#E65100",
                 command=lambda idx=i: self.reemplazar_clip(idx),
             ).pack(side="left", padx=5)
+            ctk.CTkButton(
+                frame_controles, text="▶️ Ver", width=50, fg_color="#00897B",
+                command=lambda r=item["archivo"]: self.previsualizar_clip(r),
+            ).pack(side="left", padx=2)
 
         self.mostrar_estado("✅ Storyboard interactivo listo.", "green")
 
@@ -2441,6 +2805,10 @@ REGLAS DE ORO:
 
         motor_voz = self.menu_motor_voz.get()
         voz_seleccionada = self.menu_voz_eleven.get()
+        if getattr(self, "reproductor_voz", None):
+            # Liberamos el archivo de voz si se está escuchando para poder sobrescribirlo
+            self.after(0, self.alternar_escuchar_voz)
+            time.sleep(0.4)
         self.cambiar_estado_boton(self.btn_paso2, "disabled")
         try:
             if motor_voz.startswith("Edge-TTS"):
@@ -3325,6 +3693,13 @@ REGLAS DE ORO:
 
             btns = ctk.CTkFrame(card, fg_color="transparent")
             btns.pack(side="right", padx=8, pady=6)
+            ctk.CTkButton(
+                btns,
+                text="▶️ Ver Clip (con audio)",
+                fg_color="#00897B",
+                width=210,
+                command=lambda c=clip_info: self.previsualizar_clip(c.get("archivo", ""), con_audio_propio=True),
+            ).pack(pady=2)
             ctk.CTkButton(
                 btns,
                 text="🔤 Quemar Subs Hormozi + Publicar",
