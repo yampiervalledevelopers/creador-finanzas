@@ -1477,133 +1477,287 @@ class ReproductorAudioMCI:
 
 class VentanaPrevisualizacion(ctk.CTkToplevel):
     """
-    Reproductor de Previsualización en Vivo:
-    Reproduce los segmentos del Storyboard (o un clip suelto) en tiempo real, sincronizados con la voz,
-    con controles de Play / Pausa / Reiniciar y barra de progreso para saltar a cualquier punto.
-    No renderiza nada: lee los fotogramas directamente de los clips (rápido y sin gastar disco).
+    Reproductor de Previsualización en Vivo (Redimensionable y Auto-Ajustable):
+    - Controles y barra de progreso ARRIBA para que nunca queden ocultos fuera de pantalla.
+    - Ventana 100% redimensionable con selector de tamaño (Compacto / Mediano / Grande / Auto-Ventana).
+    - Precarga inteligente en segundo plano y Auto-Play inmediato con clic en el video o barra espaciadora.
     """
 
     FPS_PREVIEW = 15
+
+    ESCALAS_VERTICAL = {
+        "Compacto (216x384)": (216, 384),
+        "Mediano (260x462)": (260, 462),
+        "Grande (340x604)": (340, 604),
+        "Auto (Ajustar ventana)": None,
+    }
+    ESCALAS_HORIZONTAL = {
+        "Compacto (480x270)": (480, 270),
+        "Mediano (640x360)": (640, 360),
+        "Grande (854x480)": (854, 480),
+        "Auto (Ajustar ventana)": None,
+    }
 
     def __init__(self, master, segmentos, ruta_audio=None, vertical=True, titulo="Previsualización",
                  extraer_audio_de=None):
         super().__init__(master)
         self.title(f"▶️ {titulo}")
         self.segmentos = [s for s in segmentos if s.get("archivo") and os.path.exists(s["archivo"])]
-        self.duracion_total = sum(s["duracion"] for s in self.segmentos) if self.segmentos else 0.0
+        self.duracion_total = sum(float(s.get("duracion", 0)) for s in self.segmentos) if self.segmentos else 0.0
         self.vertical = vertical
-        self.ancho_disp, self.alto_disp = (360, 640) if vertical else (854, 480)
+        self.mapa_escalas = self.ESCALAS_VERTICAL if vertical else self.ESCALAS_HORIZONTAL
+
+        # Detectar altura de pantalla para elegir el tamaño ideal que NUNCA se salga de la pantalla
+        alto_pantalla = self.winfo_screenheight()
+        ancho_pantalla = self.winfo_screenwidth()
+        if vertical:
+            if alto_pantalla <= 800:
+                escala_inicial = "Mediano (260x462)"
+                self.ancho_disp, self.alto_disp = (260, 462)
+            else:
+                escala_inicial = "Grande (340x604)"
+                self.ancho_disp, self.alto_disp = (340, 604)
+        else:
+            if alto_pantalla <= 800:
+                escala_inicial = "Mediano (640x360)"
+                self.ancho_disp, self.alto_disp = (640, 360)
+            else:
+                escala_inicial = "Grande (854x480)"
+                self.ancho_disp, self.alto_disp = (854, 480)
+
+        self.modo_auto_ventana = False
         self.cache_clips = {}
+        self.lock_clips = threading.Lock()
         self.reproduciendo = False
+        self.listo_para_reproducir = False
         self.posicion = 0.0
         self.inicio_reloj = 0.0
         self.foto_actual = None
         self.cerrado = False
         self.arrastrando_slider = False
-        self.audio = ReproductorAudioMCI(ruta_audio) if ruta_audio else None
+        self.audio = ReproductorAudioMCI(ruta_audio) if (ruta_audio and os.path.exists(ruta_audio)) else None
 
-        self.geometry(f"{self.ancho_disp + 40}x{self.alto_disp + 190}")
-        self.resizable(False, False)
+        ancho_win = max(480, self.ancho_disp + 60)
+        alto_win = min(alto_pantalla - 70, self.alto_disp + 165)
+        pos_x = max(20, (ancho_pantalla - ancho_win) // 2)
+        pos_y = max(10, (alto_pantalla - alto_win) // 3)
+        self.geometry(f"{ancho_win}x{alto_win}+{pos_x}+{pos_y}")
+        self.minsize(380, 420)
+        self.resizable(True, True)
         self.attributes("-topmost", True)
-        self.after(400, lambda: self.attributes("-topmost", False))
+        self.after(400, lambda: self.attributes("-topmost", False) if not self.cerrado else None)
         self.protocol("WM_DELETE_WINDOW", self.cerrar)
 
-        self.lienzo = ctk.CTkLabel(
-            self, text="Cargando previsualización...", width=self.ancho_disp, height=self.alto_disp,
-            fg_color="#000000",
-        )
-        self.lienzo.pack(padx=20, pady=(15, 5))
+        # ================== BARRA DE CONTROLES ARRIBA (SIEMPRE VISIBLE) ==================
+        panel_top = ctk.CTkFrame(self, fg_color="#1A222C", corner_radius=8)
+        panel_top.pack(fill="x", padx=10, pady=(8, 4))
 
-        self.lbl_narracion = ctk.CTkLabel(
-            self, text="", wraplength=self.ancho_disp, text_color="#FFD54F",
-            font=ctk.CTkFont(size=12, weight="bold"), height=36,
-        )
-        self.lbl_narracion.pack(padx=20)
+        fila_botones = ctk.CTkFrame(panel_top, fg_color="transparent")
+        fila_botones.pack(fill="x", padx=8, pady=(6, 2))
 
+        self.btn_play = ctk.CTkButton(
+            fila_botones, text="⏳ Cargando...", width=105, height=30,
+            fg_color="#2E7D32", font=ctk.CTkFont(size=12, weight="bold"),
+            state="disabled", command=self.alternar_play,
+        )
+        self.btn_play.pack(side="left", padx=3)
+
+        ctk.CTkButton(
+            fila_botones, text="⏮️ Inicio", width=80, height=30,
+            fg_color="#455A64", font=ctk.CTkFont(size=12), command=self.reiniciar,
+        ).pack(side="left", padx=3)
+
+        self.combo_escala = ctk.CTkOptionMenu(
+            fila_botones,
+            values=list(self.mapa_escalas.keys()),
+            width=155,
+            height=28,
+            fg_color="#263238",
+            button_color="#37474F",
+            font=ctk.CTkFont(size=11),
+            command=self._cambiar_escala,
+        )
+        self.combo_escala.set(escala_inicial)
+        self.combo_escala.pack(side="left", padx=5)
+
+        self.lbl_tiempo = ctk.CTkLabel(
+            fila_botones, text=self._formato_tiempo(0),
+            font=ctk.CTkFont(size=12, weight="bold"), text_color="#80CBC4",
+        )
+        self.lbl_tiempo.pack(side="right", padx=6)
+
+        # Barra de progreso deslizable justo debajo de los botones
         self.slider = ctk.CTkSlider(
-            self, from_=0, to=max(0.1, self.duracion_total), width=self.ancho_disp,
-            command=self._al_mover_slider,
+            panel_top, from_=0, to=max(0.1, self.duracion_total),
+            command=self._al_mover_slider, height=16,
         )
         self.slider.set(0)
-        self.slider.pack(padx=20, pady=4)
+        self.slider.pack(fill="x", padx=12, pady=(2, 6))
         self.slider.bind("<ButtonPress-1>", lambda e: setattr(self, "arrastrando_slider", True))
         self.slider.bind("<ButtonRelease-1>", self._al_soltar_slider)
 
-        fila = ctk.CTkFrame(self, fg_color="transparent")
-        fila.pack(fill="x", padx=20, pady=4)
-        self.btn_play = ctk.CTkButton(fila, text="▶️ Play", width=110, fg_color="#2E7D32", command=self.alternar_play)
-        self.btn_play.pack(side="left", padx=3)
-        ctk.CTkButton(fila, text="⏮️ Reiniciar", width=110, fg_color="#455A64", command=self.reiniciar).pack(
-            side="left", padx=3
+        # ================== SUBTÍTULO / NARRACIÓN ACTIVA ==================
+        self.lbl_narracion = ctk.CTkLabel(
+            self, text="💡 Haz clic sobre el video o presiona ESPACIO para Pausar / Reproducir",
+            wraplength=ancho_win - 30, text_color="#FFD54F",
+            font=ctk.CTkFont(size=12, weight="bold"), height=28,
         )
-        self.lbl_tiempo = ctk.CTkLabel(fila, text=self._formato_tiempo(0))
-        self.lbl_tiempo.pack(side="right", padx=3)
+        self.lbl_narracion.pack(fill="x", padx=12, pady=(0, 2))
+
+        # ================== LIENZO DE VIDEO CENTRAL ==================
+        self.contenedor_video = ctk.CTkFrame(self, fg_color="#000000", corner_radius=8)
+        self.contenedor_video.pack(fill="both", expand=True, padx=10, pady=(2, 8))
+
+        self.lienzo = ctk.CTkLabel(
+            self.contenedor_video,
+            text="⏳ Preparando clips de video para reproducción fluida...",
+            fg_color="#000000",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=13, weight="bold"),
+        )
+        self.lienzo.pack(expand=True)
+        # Clic en el video alterna Play/Pausa
+        self.lienzo.bind("<Button-1>", lambda e: self.alternar_play())
+        self.contenedor_video.bind("<Button-1>", lambda e: self.alternar_play())
+        self.bind("<space>", lambda e: self.alternar_play())
+        self.contenedor_video.bind("<Configure>", self._al_redimensionar_contenedor)
 
         if not self.segmentos:
             self.lienzo.configure(text="❌ No hay clips válidos para previsualizar.")
             return
 
-        if extraer_audio_de:
-            self.btn_play.configure(state="disabled", text="⏳ Audio...")
-            threading.Thread(target=self._preparar_audio_clip, args=(extraer_audio_de,), daemon=True).start()
+        # Precargar clips y audio en segundo plano y arrancar reproducción automáticamente
+        threading.Thread(
+            target=self._precargar_todo, args=(extraer_audio_de,), daemon=True
+        ).start()
 
-        self._mostrar_frame(0.0)
+    # ---------- ajuste de tamaño ----------
+    def _cambiar_escala(self, seleccion):
+        dims = self.mapa_escalas.get(seleccion)
+        if dims is None:
+            self.modo_auto_ventana = True
+            self._recalcular_dimensiones_auto()
+        else:
+            self.modo_auto_ventana = False
+            self.ancho_disp, self.alto_disp = dims
+            alto_pantalla = self.winfo_screenheight()
+            ancho_win = max(480, self.ancho_disp + 60)
+            alto_win = min(alto_pantalla - 65, self.alto_disp + 165)
+            self.geometry(f"{ancho_win}x{alto_win}")
+        if self.listo_para_reproducir and not self.reproduciendo:
+            self._mostrar_frame(self.posicion)
 
-    # ---------- utilidades ----------
+    def _al_redimensionar_contenedor(self, evento):
+        if self.modo_auto_ventana and evento.width > 100 and evento.height > 100:
+            self._recalcular_dimensiones_auto(evento.width, evento.height)
+
+    def _recalcular_dimensiones_auto(self, w_cont=None, h_cont=None):
+        if w_cont is None or h_cont is None:
+            w_cont = max(200, self.contenedor_video.winfo_width() - 16)
+            h_cont = max(200, self.contenedor_video.winfo_height() - 16)
+        ratio = (9 / 16) if self.vertical else (16 / 9)
+        if (w_cont / max(1, h_cont)) > ratio:
+            nuevo_alto = max(160, h_cont - 10)
+            nuevo_ancho = int(nuevo_alto * ratio)
+        else:
+            nuevo_ancho = max(160, w_cont - 10)
+            nuevo_alto = int(nuevo_ancho / ratio)
+        self.ancho_disp, self.alto_disp = nuevo_ancho, nuevo_alto
+        self.lbl_narracion.configure(wraplength=max(300, w_cont))
+
+    # ---------- utilidades y precarga ----------
     def _formato_tiempo(self, t):
         total = self.duracion_total
         return f"{int(t // 60):02d}:{int(t % 60):02d} / {int(total // 60):02d}:{int(total % 60):02d}"
 
-    def _preparar_audio_clip(self, ruta_video):
+    def _precargar_todo(self, extraer_audio_de):
+        # 1. Si es un clip con audio integrado, extraer audio temporal
         ruta_lista = None
-        try:
-            ruta_tmp = os.path.join("assets_generados", f"_preview_audio_{int(time.time())}.mp3")
-            os.makedirs("assets_generados", exist_ok=True)
-            clip = VideoFileClip(ruta_video)
-            if clip.audio is not None:
-                clip.audio.write_audiofile(ruta_tmp, logger=None)
-                self.ruta_audio_temporal = ruta_tmp
-                ruta_lista = ruta_tmp
-            clip.close()
-        except Exception:
-            logging.exception("No se pudo extraer audio para la previsualización")
+        if extraer_audio_de and os.path.exists(extraer_audio_de):
+            try:
+                self.after(0, lambda: self.lienzo.configure(text="⏳ Extrayendo audio del clip..."))
+                ruta_tmp = os.path.join("assets_generados", f"_preview_audio_{int(time.time())}.mp3")
+                os.makedirs("assets_generados", exist_ok=True)
+                clip_aud = VideoFileClip(extraer_audio_de)
+                if clip_aud.audio is not None:
+                    clip_aud.audio.write_audiofile(ruta_tmp, logger=None)
+                    self.ruta_audio_temporal = ruta_tmp
+                    ruta_lista = ruta_tmp
+                clip_aud.close()
+            except Exception:
+                logging.exception("No se pudo extraer audio para la previsualización")
 
-        def _activar():
+        # 2. Abrir cada archivo de video sin target_resolution (evita bloqueo en MoviePy 1.0.3)
+        rutas_unicas = []
+        for s in self.segmentos:
+            r = s.get("archivo")
+            if r and r not in rutas_unicas and os.path.exists(r):
+                rutas_unicas.append(r)
+
+        total_clips = len(rutas_unicas)
+        for idx, ruta in enumerate(rutas_unicas, 1):
+            if self.cerrado:
+                return
+            try:
+                self.after(
+                    0,
+                    lambda i=idx, tot=total_clips: self.lienzo.configure(
+                        text=f"⏳ Cargando clips de video ({i}/{tot})..."
+                    ) if not self.cerrado else None,
+                )
+                clip_v = VideoFileClip(ruta, audio=False)
+                # Decodificar primer frame para dejar el lector listo
+                _ = clip_v.get_frame(0)
+                with self.lock_clips:
+                    self.cache_clips[ruta] = clip_v
+            except Exception:
+                logging.exception(f"No se pudo abrir clip para preview: {ruta}")
+
+        def _activar_y_reproducir():
             if self.cerrado:
                 return
             if ruta_lista:
                 self.audio = ReproductorAudioMCI(ruta_lista)
+            self.listo_para_reproducir = True
             self.btn_play.configure(state="normal", text="▶️ Play")
+            self._mostrar_frame(0.0)
+            # Iniciar reproducción automáticamente para que no aparezca detenido
+            self.reproducir()
 
-        self.after(0, _activar)
+        self.after(0, _activar_y_reproducir)
 
     def _obtener_clip(self, ruta):
-        if ruta not in self.cache_clips:
-            alto_carga = self.alto_disp if self.vertical else self.alto_disp
-            self.cache_clips[ruta] = VideoFileClip(ruta, audio=False, target_resolution=(alto_carga, None))
-        return self.cache_clips[ruta]
+        with self.lock_clips:
+            if ruta not in self.cache_clips:
+                self.cache_clips[ruta] = VideoFileClip(ruta, audio=False)
+            return self.cache_clips[ruta]
 
     def _segmento_en(self, t):
         acumulado = 0.0
         for seg in self.segmentos:
-            if t < acumulado + seg["duracion"]:
+            dur = float(seg.get("duracion", 1.0))
+            if t < acumulado + dur:
                 return seg, t - acumulado
-            acumulado += seg["duracion"]
+            acumulado += dur
         ultimo = self.segmentos[-1]
-        return ultimo, max(0.0, ultimo["duracion"] - 0.05)
+        return ultimo, max(0.0, float(ultimo.get("duracion", 1.0)) - 0.05)
 
     def _mostrar_frame(self, t):
+        if self.cerrado or not self.listo_para_reproducir:
+            return
         try:
             seg, t_local = self._segmento_en(t)
             clip = self._obtener_clip(seg["archivo"])
-            t_clip = seg.get("offset", 0.0) + t_local
-            if clip.duration and clip.duration > 0:
-                t_clip = t_clip % max(0.05, clip.duration - 0.05)
-            frame = clip.get_frame(t_clip)
+            t_clip = float(seg.get("offset", 0.0)) + t_local
+            if clip.duration and clip.duration > 0.1:
+                t_clip = t_clip % max(0.05, clip.duration - 0.08)
+            frame = clip.get_frame(max(0.0, t_clip))
             img = PIL.Image.fromarray(frame)
 
             # Reencuadre centrado igual que el render final (9:16 o 16:9)
-            ratio_obj = self.ancho_disp / self.alto_disp
+            ancho_obj = max(120, int(self.ancho_disp))
+            alto_obj = max(120, int(self.alto_disp))
+            ratio_obj = ancho_obj / alto_obj
             w, h = img.size
             if (w / h) > ratio_obj:
                 nuevo_w = int(h * ratio_obj)
@@ -1613,29 +1767,33 @@ class VentanaPrevisualizacion(ctk.CTkToplevel):
                 nuevo_h = int(w / ratio_obj)
                 y1 = (h - nuevo_h) // 2
                 img = img.crop((0, y1, w, y1 + nuevo_h))
-            img = img.resize((self.ancho_disp, self.alto_disp), PIL.Image.Resampling.BILINEAR)
+            img = img.resize((ancho_obj, alto_obj), PIL.Image.Resampling.BILINEAR)
 
-            self.foto_actual = ctk.CTkImage(light_image=img, dark_image=img, size=(self.ancho_disp, self.alto_disp))
+            self.foto_actual = ctk.CTkImage(light_image=img, dark_image=img, size=(ancho_obj, alto_obj))
             self.lienzo.configure(image=self.foto_actual, text="")
             narr = seg.get("narracion", "")
-            self.lbl_narracion.configure(text=f"🗣️ {narr[:140]}" if narr else "")
+            if narr:
+                self.lbl_narracion.configure(text=f"🗣️ {narr[:135]}")
             self.lbl_tiempo.configure(text=self._formato_tiempo(t))
             if not self.arrastrando_slider:
-                self.slider.set(t)
-        except Exception:
+                self.slider.set(min(self.duracion_total, max(0.0, t)))
+        except Exception as err:
             logging.exception("Error mostrando fotograma de previsualización")
+            self.lbl_narracion.configure(text=f"⚠️ Fotograma omitido: {str(err)[:80]}")
 
     # ---------- controles ----------
     def alternar_play(self):
+        if not self.listo_para_reproducir:
+            return
         if self.reproduciendo:
             self.pausar()
         else:
             self.reproducir()
 
     def reproducir(self):
-        if not self.segmentos:
+        if not self.segmentos or not self.listo_para_reproducir:
             return
-        if self.posicion >= self.duracion_total - 0.05:
+        if self.posicion >= self.duracion_total - 0.08:
             self.posicion = 0.0
         self.reproduciendo = True
         self.inicio_reloj = time.perf_counter() - self.posicion
@@ -1648,9 +1806,12 @@ class VentanaPrevisualizacion(ctk.CTkToplevel):
         self.reproduciendo = False
         if self.audio:
             self.audio.pausar()
-        self.btn_play.configure(text="▶️ Play", fg_color="#2E7D32")
+        if not self.cerrado:
+            self.btn_play.configure(text="▶️ Play", fg_color="#2E7D32")
 
     def reiniciar(self):
+        if not self.listo_para_reproducir:
+            return
         estaba = self.reproduciendo
         self.pausar()
         self.posicion = 0.0
@@ -1659,12 +1820,14 @@ class VentanaPrevisualizacion(ctk.CTkToplevel):
             self.reproducir()
 
     def _al_mover_slider(self, valor):
-        if not self.reproduciendo:
+        if self.listo_para_reproducir and not self.reproduciendo:
             self.posicion = float(valor)
             self._mostrar_frame(self.posicion)
 
     def _al_soltar_slider(self, _evento=None):
         self.arrastrando_slider = False
+        if not self.listo_para_reproducir:
+            return
         estaba = self.reproduciendo
         if estaba:
             self.pausar()
@@ -1676,14 +1839,17 @@ class VentanaPrevisualizacion(ctk.CTkToplevel):
     def _tick(self):
         if not self.reproduciendo or self.cerrado:
             return
-        self.posicion = time.perf_counter() - self.inicio_reloj
+        t_inicio_frame = time.perf_counter()
+        self.posicion = t_inicio_frame - self.inicio_reloj
         if self.posicion >= self.duracion_total:
             self.posicion = self.duracion_total
             self._mostrar_frame(max(0.0, self.duracion_total - 0.05))
             self.pausar()
             return
         self._mostrar_frame(self.posicion)
-        self.after(int(1000 / self.FPS_PREVIEW), self._tick)
+        t_gastado_ms = int((time.perf_counter() - t_inicio_frame) * 1000)
+        espera_ms = max(15, int(1000 / self.FPS_PREVIEW) - t_gastado_ms)
+        self.after(espera_ms, self._tick)
 
     def cerrar(self):
         self.cerrado = True
@@ -1691,12 +1857,13 @@ class VentanaPrevisualizacion(ctk.CTkToplevel):
         if self.audio:
             self.audio.detener()
             self.audio.cerrar()
-        for clip in self.cache_clips.values():
-            try:
-                clip.close()
-            except Exception:
-                pass
-        self.cache_clips = {}
+        with self.lock_clips:
+            for clip in self.cache_clips.values():
+                try:
+                    clip.close()
+                except Exception:
+                    pass
+            self.cache_clips = {}
         ruta_tmp = getattr(self, "ruta_audio_temporal", None)
         if ruta_tmp and os.path.exists(ruta_tmp):
             try:
@@ -1716,7 +1883,11 @@ class StudioApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("🎬 Studio Automator Pro v14.0 - AI Scene Sync & Dynamic FX")
-        self.geometry("1340x880")
+        ancho_scr = self.winfo_screenwidth()
+        alto_scr = self.winfo_screenheight()
+        ancho_app = min(1340, ancho_scr - 30)
+        alto_app = min(860, alto_scr - 70)
+        self.geometry(f"{ancho_app}x{alto_app}+10+10")
         os.makedirs(self.CARPETA_ASSETS, exist_ok=True)
 
         self.keywords_actuales = []
