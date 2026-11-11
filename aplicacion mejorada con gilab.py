@@ -1522,13 +1522,31 @@ class StudioApp(ctk.CTk):
         self.menu_formato = ctk.CTkOptionMenu(
             frame_izq,
             values=[
-                "SHORT (Vertical)",
-                "LARGO (Horizontal Normal)",
-                "EXTRA LARGO (Documental por Capítulos)",
+                "SHORT (Vertical 9:16)",
+                "LARGO (Horizontal Normal 16:9)",
+                "EXTRA LARGO (Documental por Capítulos 16:9)",
             ],
             width=300,
         )
         self.menu_formato.pack(padx=20, pady=5)
+
+        ctk.CTkLabel(
+            frame_izq, text="⏱️ Duración del Short (Modo Vertical):",
+            font=ctk.CTkFont(size=14, weight="bold"), text_color="#00E5FF",
+        ).pack(anchor="w", padx=20, pady=(6, 0))
+        self.menu_duracion_short = ctk.CTkOptionMenu(
+            frame_izq,
+            values=[
+                "⚡ Short Rápido (30s - 45s | ~95 palabras)",
+                "🔥 Short Completo (1 Minuto | ~165 palabras)",
+                "💰 Short Monetizable (1.5 a 2 Min | ~280 palabras)",
+                "🎬 Short Extendido Máximo (2.5 a 3 Min | ~450 palabras)",
+            ],
+            width=300,
+            fg_color="#006064",
+        )
+        self.menu_duracion_short.set("🔥 Short Completo (1 Minuto | ~165 palabras)")
+        self.menu_duracion_short.pack(padx=20, pady=5)
 
         ctk.CTkLabel(
             frame_izq, text="🎭 Género / Nicho del Canal:",
@@ -1750,6 +1768,7 @@ class StudioApp(ctk.CTk):
             "fal": self.entrada_fal.get().strip(),
             "replicate": self.entrada_replicate.get().strip(),
             "genero_canal": self.menu_genero.get(),
+            "duracion_short": self.menu_duracion_short.get(),
             "motor_ia": self.menu_motor_ia.get(),
             "motor_voz": self.menu_motor_voz.get(),
             "voz_eleven": self.menu_voz_eleven.get(),
@@ -1790,6 +1809,8 @@ class StudioApp(ctk.CTk):
                 self.entrada_replicate.insert(0, k["replicate"])
             if k.get("genero_canal") and k["genero_canal"] in GENEROS_CANAL:
                 self.menu_genero.set(k["genero_canal"])
+            if k.get("duracion_short"):
+                self.menu_duracion_short.set(k["duracion_short"])
             if k.get("motor_ia"):
                 self.menu_motor_ia.set(k["motor_ia"])
             if k.get("motor_voz"):
@@ -2036,9 +2057,11 @@ class StudioApp(ctk.CTk):
             values=[
                 "3 Clips Virales (15s - 40s)",
                 "5 Clips Virales (15s - 40s)",
-                "1 Clip Principal (25s - 55s)",
+                "3 Clips de 1 Minuto (50s - 70s)",
+                "2 Clips Monetizables (1.5 a 2 Min)",
+                "1 Clip Extendido (2 a 3 Minutos)",
             ],
-            width=210,
+            width=235,
             fg_color="#37474F",
         )
         self.menu_cant_clips.pack(side="right")
@@ -2254,13 +2277,26 @@ class StudioApp(ctk.CTk):
         info_gen = self.info_genero_actual
 
         if self.es_vertical:
-            reglas_formato = f"""2. LONGITUD: Escribe un guion explosivo de máximo 90-110 palabras.
+            dur_short = self.menu_duracion_short.get() if hasattr(self, "menu_duracion_short") else ""
+            if "2.5 a 3 Min" in dur_short:
+                rango_palabras = "420 a 480 palabras REALES (Short Extendido / Mini-Documental Vertical de 2.5 a 3 minutos). PROHIBIDO resumir; usa [PAUSA] para cambios de acto"
+                num_keywords = "18 a 22"
+            elif "1.5 a 2 Min" in dur_short:
+                rango_palabras = "260 a 310 palabras REALES (Short / TikTok Monetizable de 90 a 120 segundos). Desarrolla cada punto con ejemplos y usa [PAUSA]"
+                num_keywords = "14 a 16"
+            elif "1 Minuto" in dur_short:
+                rango_palabras = "155 a 180 palabras REALES (Short Completo de 60 segundos exactos)"
+                num_keywords = "10 a 12"
+            else:
+                rango_palabras = "90 a 110 palabras (Short Rápido de 30 a 45 segundos)"
+                num_keywords = "6 a 9"
+
+            reglas_formato = f"""2. LONGITUD OBLIGATORIA: Escribe un guion vertical de {rango_palabras}.
 3. TONO DEL GÉNERO ({genero_nombre}): {info_gen['instruccion_tono']}
-4. ESTRUCTURA (Gancho, Nudo y Desenlace):
+4. ESTRUCTURA (Gancho, Desarrollo en Escalada y Desenlace):
    - GANCHO: Empieza en el segundo 0 con un impacto brutal o intriga extrema. CERO saludos.
-   - NUDO: Desarrolla la historia/conflicto con ritmo trepidante y tensión constante.
+   - DESARROLLO: Cuenta la historia/conflicto con ritmo trepidante, micro-ganchos cada 15 segundos y tensión constante sin relleno.
    - DESENLACE: {info_gen['cierre_estructura']}"""
-            num_keywords = "6 a 10"
             etiqueta_modo = ""
         elif self.es_extra_largo:
             reglas_formato = f"""2. MODO EXTRA LARGO POR CAPÍTULOS (DOCUMENTAL EXTENSO DE 20 A 28 MINUTOS):
@@ -2491,7 +2527,8 @@ REGLAS DE ORO:
         self.mostrar_estado("Buscando clips HD en Pexels en orden de escena...", "yellow")
         service = PexelsService(self.entrada_pexels.get().strip())
         ori = "portrait" if self.es_vertical else "landscape"
-        cantidad = 1 if self.es_vertical else (3 if self.es_extra_largo else 2)
+        es_short_extenso = self.es_vertical and len(self.keywords_actuales) >= 14
+        cantidad = (2 if es_short_extenso else 1) if self.es_vertical else (3 if self.es_extra_largo else 2)
         urls_descargadas = set()
 
         for idx_kw, kw in enumerate(self.keywords_actuales):
@@ -2528,7 +2565,8 @@ REGLAS DE ORO:
     def generar_clips_pixabay(self):
         self.mostrar_estado("Buscando clips HD en Pixabay (100% Gratis)...", "yellow")
         service = PixabayService(self.entrada_pixabay.get().strip())
-        cantidad = 1 if self.es_vertical else (3 if self.es_extra_largo else 2)
+        es_short_extenso = self.es_vertical and len(self.keywords_actuales) >= 14
+        cantidad = (2 if es_short_extenso else 1) if self.es_vertical else (3 if self.es_extra_largo else 2)
         urls_descargadas = set()
 
         for idx_kw, kw in enumerate(self.keywords_actuales):
@@ -3188,12 +3226,16 @@ REGLAS DE ORO:
             self.mostrar_estado("❌ Primero descarga un video por URL o carga uno desde tu PC.", "red")
             return
 
-        self.formato_actual = "SHORT" if "SHORT" in self.menu_formato.get() else "LARGO"
+        self.formato_actual = self.obtener_formato_seleccionado()
         opcion_cant = self.menu_cant_clips.get()
-        if opcion_cant.startswith("5"):
+        if "1 Minuto" in opcion_cant:
+            num_clips, dur_min, dur_max = 3, 50, 70
+        elif "1.5 a 2 Min" in opcion_cant:
+            num_clips, dur_min, dur_max = 2, 85, 125
+        elif "2 a 3 Minutos" in opcion_cant:
+            num_clips, dur_min, dur_max = 1, 120, 178
+        elif opcion_cant.startswith("5"):
             num_clips, dur_min, dur_max = 5, 15, 40
-        elif opcion_cant.startswith("1"):
-            num_clips, dur_min, dur_max = 1, 25, 55
         else:
             num_clips, dur_min, dur_max = 3, 15, 40
 
@@ -3409,6 +3451,23 @@ REGLAS DE ORO:
             info_gen = self.info_genero_actual
             self.mostrar_estado(f"🧠 Paso 2/4: Reescribiendo guion mejorado ({genero_nombre})...", "orange")
 
+            dur_short = self.menu_duracion_short.get() if hasattr(self, "menu_duracion_short") else ""
+            if not self.es_vertical:
+                long_remix = "1200 a 1600 palabras (Formato Largo)"
+                num_esc_remix = 16
+            elif "2.5 a 3 Min" in dur_short:
+                long_remix = "420 a 480 palabras REALES (Short Extendido de 2.5 a 3 minutos)"
+                num_esc_remix = 18
+            elif "1.5 a 2 Min" in dur_short:
+                long_remix = "260 a 310 palabras REALES (Short Monetizable de 1.5 a 2 minutos)"
+                num_esc_remix = 14
+            elif "1 Minuto" in dur_short:
+                long_remix = "155 a 180 palabras REALES (Short Completo de 1 minuto)"
+                num_esc_remix = 10
+            else:
+                long_remix = "90 a 110 palabras (Short Rápido de 30-45 segundos)"
+                num_esc_remix = 8
+
             prompt_remix = f"""Analiza la siguiente transcripción de un video que ya demostró ser viral:
 --- TRANSCRIPCIÓN ORIGINAL ---
 {texto_original[:8000]}
@@ -3416,12 +3475,12 @@ REGLAS DE ORO:
 
 Tu misión: Reescribe un guion 100% NUEVO, original, sin plagio literal pero conservando y potenciando la idea ganadora, el gancho y la estructura de retención, adaptado al género: {genero_nombre}.
 Tono: {info_gen['instruccion_tono']}
-Longitud: {'90 a 110 palabras (Formato Short Vertical)' if self.es_vertical else '1200 a 1600 palabras (Formato Largo)'}.
+Longitud: {long_remix}.
 Cierre: {info_gen['cierre_estructura']}
 
 Devuelve ESTRICTAMENTE un JSON con:
 - 'guion_locucion': texto completo en ESPAÑOL para narrar.
-- 'escenas': lista de 8 escenas ordenadas con 'narracion', 'keyword_pexels' y 'prompt_ia'.
+- 'escenas': lista de {num_esc_remix} escenas ordenadas con 'narracion', 'keyword_pexels' y 'prompt_ia'.
 - 'keywords_visuales': lista de keywords en inglés.
 - 'prompts_visuales': lista de prompts en inglés.
 - 'titulo_seo': nuevo título aún más viral.
