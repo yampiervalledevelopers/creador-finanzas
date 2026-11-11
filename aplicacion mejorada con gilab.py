@@ -11,6 +11,7 @@ import base64
 import logging
 import shutil
 import time
+import tkinter as tk
 from tkinter import filedialog
 from openai import OpenAI
 import requests
@@ -38,6 +39,7 @@ import numpy as np
 import PIL.Image
 import PIL.ImageDraw
 import PIL.ImageFont
+import PIL.ImageTk
 if not hasattr(PIL.Image, "ANTIALIAS"):
     PIL.Image.ANTIALIAS = PIL.Image.Resampling.LANCZOS
 
@@ -1225,13 +1227,21 @@ class VideoRenderer:
                     continue
         return PIL.ImageFont.load_default()
 
-    def procesar_recorte_clip(self, ruta_clip, duracion):
+    def procesar_recorte_clip(self, ruta_clip, duracion, offset=0.0):
         ancho, alto = self.dimensiones
         clip_orig = VideoFileClip(ruta_clip).without_audio()
-        if clip_orig.duration < duracion:
-            clip = afx.audio_loop(clip_orig, duration=duracion) if False else clip_orig.loop(duration=duracion)
+        dur_orig = max(0.2, float(clip_orig.duration or duracion))
+        offset_seguro = max(0.0, float(offset or 0.0))
+        if offset_seguro >= dur_orig - 0.15:
+            offset_seguro = offset_seguro % max(0.15, dur_orig - 0.15)
+        if offset_seguro > 0.05 and offset_seguro < dur_orig - 0.15:
+            clip_base = clip_orig.subclip(offset_seguro, dur_orig)
         else:
-            clip = clip_orig.subclip(0, duracion)
+            clip_base = clip_orig
+        if clip_base.duration < duracion:
+            clip = clip_base.loop(duration=duracion)
+        else:
+            clip = clip_base.subclip(0, duracion)
         ratio_obj = ancho / alto
         if (clip.w / clip.h) > ratio_obj:
             clip = clip.resize(height=alto)
@@ -1904,6 +1914,20 @@ class StudioApp(ctk.CTk):
         self.ruta_video_clipping = ""
         self.clips_virales_detectados = []
 
+        # Estado del Editor Horizontal estilo CapCut (Pestaña 3)
+        self.clip_seleccionado_idx = 0
+        self.posicion_aguja = 0.0
+        self.zoom_px_seg = 34.0
+        self.reproduciendo_capcut = False
+        self.inicio_reloj_capcut = 0.0
+        self.audio_capcut = None
+        self.cache_clips_capcut = {}
+        self.cache_thumbs_capcut = {}
+        self.refs_thumbs_canvas = []
+        self.foto_monitor_capcut = None
+        self.arrastrando_borde_idx = None
+        self.arrastrando_aguja = False
+
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=2)
 
@@ -1912,6 +1936,7 @@ class StudioApp(ctk.CTk):
 
         self.cargar_keys()
         self.cargar_cache()
+        self.after(150, self.dibujar_timeline_ui)
 
     # ==========================================
     # HELPERS DE HILOS Y ESTADO
@@ -2189,11 +2214,14 @@ class StudioApp(ctk.CTk):
         self.guardar_cache()
 
     def limpiar_pool_clips(self):
+        self.pausar_capcut()
         self.pool_videos = []
         self.timeline_data = []
+        self.clip_seleccionado_idx = 0
+        self.posicion_aguja = 0.0
+        self.cerrar_cache_clips_capcut()
         self.actualizar_lista_clips_ui()
-        for w in self.timeline_ui.winfo_children():
-            w.destroy()
+        self.dibujar_timeline_ui()
         self.guardar_cache()
         self.mostrar_estado("🧹 Pool de clips limpiado para nuevo video.", "yellow")
 
@@ -2400,26 +2428,231 @@ class StudioApp(ctk.CTk):
             command=self.limpiar_pool_clips, fg_color="#455A64",
         ).pack(side="right", expand=True, padx=2)
 
-        # --- PESTAÑA 3 ---
-        self.timeline_ui = ctk.CTkScrollableFrame(self.tab_timeline, fg_color="#1a1a1a")
-        self.timeline_ui.pack(fill="both", expand=True, padx=5, pady=5)
+        # --- PESTAÑA 3: EDITOR MULTIsPISTA HORIZONTAL ESTILO CAPCUT ---
+        panel_capcut_top = ctk.CTkFrame(self.tab_timeline, fg_color="#141820", corner_radius=8)
+        panel_capcut_top.pack(fill="x", padx=5, pady=(4, 3))
+
+        # Mini-Monitor en vivo a la izquierda
+        frame_monitor_capcut = ctk.CTkFrame(panel_capcut_top, fg_color="#07090D", width=200, height=150, corner_radius=6)
+        frame_monitor_capcut.pack(side="left", padx=6, pady=6)
+        frame_monitor_capcut.pack_propagate(False)
+
+        self.lbl_monitor_capcut = ctk.CTkLabel(
+            frame_monitor_capcut,
+            text="🎬 Monitor CapCut\n(Clic = Play/Pausa)",
+            text_color="#90A4AE",
+            font=ctk.CTkFont(size=11, weight="bold"),
+        )
+        self.lbl_monitor_capcut.pack(expand=True, fill="both")
+        self.lbl_monitor_capcut.bind("<Button-1>", lambda e: self.alternar_play_capcut())
+
+        # Panel derecho de controles de transporte, corte e inspector
+        frame_inspector = ctk.CTkFrame(panel_capcut_top, fg_color="transparent")
+        frame_inspector.pack(side="left", fill="both", expand=True, padx=(2, 6), pady=4)
+
+        # Fila 1: Transporte + Tiempo Digital + Zoom de Barra Horizontal
+        fila_transporte = ctk.CTkFrame(frame_inspector, fg_color="#1E2530", corner_radius=6)
+        fila_transporte.pack(fill="x", pady=(0, 3))
+
+        self.btn_play_capcut = ctk.CTkButton(
+            fila_transporte, text="▶️ Play", width=82, height=26,
+            fg_color="#2E7D32", font=ctk.CTkFont(size=12, weight="bold"),
+            command=self.alternar_play_capcut,
+        )
+        self.btn_play_capcut.pack(side="left", padx=4, pady=3)
+
+        ctk.CTkButton(
+            fila_transporte, text="⏮️ 00:00", width=66, height=26,
+            fg_color="#37474F", font=ctk.CTkFont(size=11),
+            command=self.reiniciar_aguja_capcut,
+        ).pack(side="left", padx=2, pady=3)
+
+        self.lbl_tiempo_capcut = ctk.CTkLabel(
+            fila_transporte, text="⏱️ 00:00.0 / 00:00.0",
+            font=ctk.CTkFont(size=12, weight="bold"), text_color="#00E5FF",
+        )
+        self.lbl_tiempo_capcut.pack(side="left", padx=8)
+
+        ctk.CTkButton(
+            fila_transporte, text="⚖️ Ajustar a Voz", width=105, height=24,
+            fg_color="#00695C", font=ctk.CTkFont(size=11, weight="bold"),
+            command=self.ajustar_todo_al_audio,
+        ).pack(side="right", padx=4, pady=3)
+
+        ctk.CTkButton(
+            fila_transporte, text="🔍+", width=38, height=24,
+            fg_color="#263238", font=ctk.CTkFont(size=11, weight="bold"),
+            command=lambda: self.cambiar_zoom_timeline(1.25),
+        ).pack(side="right", padx=2, pady=3)
+
+        ctk.CTkButton(
+            fila_transporte, text="🔍-", width=38, height=24,
+            fg_color="#263238", font=ctk.CTkFont(size=11, weight="bold"),
+            command=lambda: self.cambiar_zoom_timeline(0.8),
+        ).pack(side="right", padx=2, pady=3)
+
+        # Fila 2: Herramientas CapCut (Dividir / Mover / Cambiar / Insertar / Duplicar / Borrar)
+        fila_tools = ctk.CTkFrame(frame_inspector, fg_color="transparent")
+        fila_tools.pack(fill="x", pady=2)
+
+        ctk.CTkButton(
+            fila_tools, text="✂️ Dividir (Corte)", width=112, height=27,
+            fg_color="#E91E63", hover_color="#AD1457",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=self.dividir_clip_en_aguja,
+        ).pack(side="left", padx=2)
+
+        ctk.CTkButton(
+            fila_tools, text="⬅️ Izq", width=54, height=27,
+            fg_color="#455A64", font=ctk.CTkFont(size=11),
+            command=self.mover_clip_izquierda,
+        ).pack(side="left", padx=2)
+
+        ctk.CTkButton(
+            fila_tools, text="➡️ Der", width=54, height=27,
+            fg_color="#455A64", font=ctk.CTkFont(size=11),
+            command=self.mover_clip_derecha,
+        ).pack(side="left", padx=2)
+
+        ctk.CTkButton(
+            fila_tools, text="🔄 Rotar Clip", width=84, height=27,
+            fg_color="#E65100", font=ctk.CTkFont(size=11),
+            command=self.reemplazar_clip_seleccionado,
+        ).pack(side="left", padx=2)
+
+        ctk.CTkButton(
+            fila_tools, text="📂 Elegir PC", width=78, height=27,
+            fg_color="#546E7A", font=ctk.CTkFont(size=11),
+            command=self.elegir_reemplazo_pc_timeline,
+        ).pack(side="left", padx=2)
+
+        ctk.CTkButton(
+            fila_tools, text="➕ Insertar", width=74, height=27,
+            fg_color="#1565C0", font=ctk.CTkFont(size=11),
+            command=self.insertar_clip_timeline,
+        ).pack(side="left", padx=2)
+
+        ctk.CTkButton(
+            fila_tools, text="📄 Duplicar", width=76, height=27,
+            fg_color="#5E35B1", font=ctk.CTkFont(size=11),
+            command=self.duplicar_clip_timeline,
+        ).pack(side="left", padx=2)
+
+        ctk.CTkButton(
+            fila_tools, text="🗑️", width=36, height=27,
+            fg_color="#C62828", font=ctk.CTkFont(size=11),
+            command=self.eliminar_clip_timeline,
+        ).pack(side="left", padx=2)
+
+        # Fila 3: Recorte fino de Duración y Punto de Inicio (Offset) del Clip Seleccionado
+        fila_trim = ctk.CTkFrame(frame_inspector, fg_color="#1A202C", corner_radius=6)
+        fila_trim.pack(fill="x", pady=2)
+
+        self.lbl_clip_activo_capcut = ctk.CTkLabel(
+            fila_trim,
+            text="🎯 Clip: Ninguno seleccionado",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#FFD54F",
+            anchor="w",
+        )
+        self.lbl_clip_activo_capcut.pack(side="left", padx=6, pady=2)
+
+        ctk.CTkButton(
+            fila_trim, text="⏩+0.5s", width=52, height=22,
+            fg_color="#37474F", font=ctk.CTkFont(size=10),
+            command=lambda: self.ajustar_offset_clip_sel(0.5),
+        ).pack(side="right", padx=2, pady=2)
+        ctk.CTkButton(
+            fila_trim, text="⏪-0.5s", width=52, height=22,
+            fg_color="#37474F", font=ctk.CTkFont(size=10),
+            command=lambda: self.ajustar_offset_clip_sel(-0.5),
+        ).pack(side="right", padx=2, pady=2)
+        ctk.CTkLabel(
+            fila_trim, text="Inicio video:", font=ctk.CTkFont(size=10), text_color="#B0BEC5"
+        ).pack(side="right", padx=(6, 2))
+
+        ctk.CTkButton(
+            fila_trim, text="+0.5s", width=44, height=22,
+            fg_color="#00838F", font=ctk.CTkFont(size=10, weight="bold"),
+            command=lambda: self.ajustar_duracion_clip_sel(0.5),
+        ).pack(side="right", padx=2, pady=2)
+        ctk.CTkButton(
+            fila_trim, text="-0.5s", width=44, height=22,
+            fg_color="#00838F", font=ctk.CTkFont(size=10, weight="bold"),
+            command=lambda: self.ajustar_duracion_clip_sel(-0.5),
+        ).pack(side="right", padx=2, pady=2)
+        ctk.CTkButton(
+            fila_trim, text="+0.1s", width=40, height=22,
+            fg_color="#263238", font=ctk.CTkFont(size=10),
+            command=lambda: self.ajustar_duracion_clip_sel(0.1),
+        ).pack(side="right", padx=1, pady=2)
+        ctk.CTkButton(
+            fila_trim, text="-0.1s", width=40, height=22,
+            fg_color="#263238", font=ctk.CTkFont(size=10),
+            command=lambda: self.ajustar_duracion_clip_sel(-0.1),
+        ).pack(side="right", padx=1, pady=2)
+        ctk.CTkLabel(
+            fila_trim, text="Duración:", font=ctk.CTkFont(size=10), text_color="#B0BEC5"
+        ).pack(side="right", padx=(4, 2))
+
+        # Fila 4: Narración / Subtítulo en el punto de la aguja
+        self.lbl_sub_capcut = ctk.CTkLabel(
+            frame_inspector,
+            text="💡 Haz clic en los bloques horizontales para seleccionarlos, mueve la aguja roja | y usa '✂️ Dividir' para hacer cortes.",
+            font=ctk.CTkFont(size=11),
+            text_color="#CFD8DC",
+            anchor="w",
+        )
+        self.lbl_sub_capcut.pack(fill="x", padx=4, pady=(2, 0))
+
+        # --- LIENZO MULTIPISTA HORIZONTAL CAPCUT (REGLA + VIDEO + GUION + AUDIO + AGUJA ROJA) ---
+        panel_pistas = ctk.CTkFrame(self.tab_timeline, fg_color="#0E1117", corner_radius=8)
+        panel_pistas.pack(fill="both", expand=True, padx=5, pady=3)
+
+        self.canvas_timeline = tk.Canvas(
+            panel_pistas,
+            bg="#10141D",
+            height=205,
+            highlightthickness=1,
+            highlightbackground="#263238",
+        )
+        self.canvas_timeline.pack(fill="both", expand=True, padx=4, pady=(4, 0))
+
+        self.scroll_timeline_x = ctk.CTkScrollbar(
+            panel_pistas, orientation="horizontal", command=self.canvas_timeline.xview
+        )
+        self.scroll_timeline_x.pack(fill="x", padx=4, pady=(2, 4))
+        self.canvas_timeline.configure(xscrollcommand=self.scroll_timeline_x.set)
+
+        # Eventos de mouse en la barra horizontal estilo CapCut
+        self.canvas_timeline.bind("<ButtonPress-1>", self._al_clic_canvas_timeline)
+        self.canvas_timeline.bind("<B1-Motion>", self._al_arrastrar_canvas_timeline)
+        self.canvas_timeline.bind("<ButtonRelease-1>", self._al_soltar_canvas_timeline)
+        self.canvas_timeline.bind("<Double-Button-1>", self._al_doble_clic_canvas_timeline)
+        self.canvas_timeline.bind("<MouseWheel>", self._al_rueda_canvas_timeline)
+
+        # Contenedor auxiliar por compatibilidad
+        self.timeline_ui = panel_pistas
+
+        # --- BARRA INFERIOR DE EXPORTACIÓN Y MONITOR FLOTANTE ---
         frame_btn_exportar = ctk.CTkFrame(self.tab_timeline, fg_color="transparent")
-        frame_btn_exportar.pack(fill="x", padx=5, pady=5)
+        frame_btn_exportar.pack(fill="x", padx=5, pady=4)
         self.btn_preview_timeline = ctk.CTkButton(
-            frame_btn_exportar, text="▶️ Previsualizar Video (En Vivo)",
-            command=self.abrir_previsualizacion_timeline, fg_color="#00897B",
+            frame_btn_exportar, text="🖥️ Abrir Previsualizador en Ventana Grande",
+            command=self.abrir_previsualizacion_timeline, fg_color="#00897B", height=30,
         )
-        self.btn_preview_timeline.pack(side="left", expand=True, padx=5)
+        self.btn_preview_timeline.pack(side="left", expand=True, padx=4)
         self.btn_exp_mp4 = ctk.CTkButton(
-            frame_btn_exportar, text="⬇️ Exportar MP4 Final",
-            command=self.hilo_exportar_mp4, fg_color="#F44336", state="disabled",
+            frame_btn_exportar, text="⬇️ Exportar MP4 Final (con tus cortes)",
+            command=self.hilo_exportar_mp4, fg_color="#F44336", state="disabled", height=30,
+            font=ctk.CTkFont(weight="bold"),
         )
-        self.btn_exp_mp4.pack(side="left", expand=True, padx=5)
+        self.btn_exp_mp4.pack(side="left", expand=True, padx=4)
         self.btn_exp_capcut = ctk.CTkButton(
             frame_btn_exportar, text="📁 Exportar a CapCut",
-            command=self.hilo_exportar_capcut, fg_color="#607D8B", state="disabled",
+            command=self.hilo_exportar_capcut, fg_color="#607D8B", state="disabled", height=30,
         )
-        self.btn_exp_capcut.pack(side="right", expand=True, padx=5)
+        self.btn_exp_capcut.pack(side="right", expand=True, padx=4)
 
         # --- PESTAÑA 4 ---
         self.lbl_video_pub = ctk.CTkLabel(
@@ -2578,10 +2811,12 @@ class StudioApp(ctk.CTk):
         if not self.timeline_data:
             self.mostrar_estado("❌ Primero crea el Storyboard (Paso 3) para previsualizar.", "red")
             return
+        self.pausar_capcut()
         segmentos = [
             {
                 "archivo": item["archivo"],
                 "duracion": item["duracion"],
+                "offset": item.get("offset", 0.0),
                 "narracion": item.get("narracion", ""),
             }
             for item in self.timeline_data
@@ -2592,14 +2827,15 @@ class StudioApp(ctk.CTk):
             segmentos,
             ruta_audio=ruta_audio,
             vertical=self.es_vertical,
-            titulo=f"Previsualización Storyboard ({self.duracion_total_audio:.0f}s)",
+            titulo=f"Previsualización Storyboard ({self.duracion_total_timeline:.1f}s)",
         )
-        self.mostrar_estado("▶️ Previsualización abierta (los subtítulos se queman al exportar).", "#00E5FF")
+        self.mostrar_estado("▶️ Previsualización abierta en ventana flotante.", "#00E5FF")
 
     def previsualizar_clip(self, ruta, con_audio_propio=False):
         if not ruta or not os.path.exists(ruta):
             self.mostrar_estado("❌ El clip no existe.", "red")
             return
+        self.pausar_capcut()
         try:
             clip = VideoFileClip(ruta, audio=False)
             duracion = clip.duration or 1.0
@@ -2637,8 +2873,63 @@ class StudioApp(ctk.CTk):
         self.mostrar_estado("🔊 Reproduciendo la locución grabada...", "#00E5FF")
 
     # ==========================================
-    # UI Y STORYBOARD
+    # UI Y EDITOR HORIZONTAL MULTIPISTA CAPCUT
     # ==========================================
+    X_ENCABEZADO_TIMELINE = 74
+
+    @property
+    def duracion_total_timeline(self):
+        if not self.timeline_data:
+            return float(self.duracion_total_audio or 0.0)
+        return sum(float(i.get("duracion", 0.0)) for i in self.timeline_data)
+
+    def cerrar_cache_clips_capcut(self):
+        for c in self.cache_clips_capcut.values():
+            try:
+                c.close()
+            except Exception:
+                pass
+        self.cache_clips_capcut = {}
+        self.cache_thumbs_capcut = {}
+        self.refs_thumbs_canvas = []
+
+    def _obtener_clip_capcut(self, ruta):
+        if ruta not in self.cache_clips_capcut:
+            self.cache_clips_capcut[ruta] = VideoFileClip(ruta, audio=False)
+        return self.cache_clips_capcut[ruta]
+
+    def _obtener_thumb_capcut(self, ruta, offset=0.0):
+        clave = (ruta, int(float(offset or 0.0) * 2))
+        if clave in self.cache_thumbs_capcut:
+            return self.cache_thumbs_capcut[clave]
+        try:
+            clip = self._obtener_clip_capcut(ruta)
+            dur = max(0.2, float(clip.duration or 1.0))
+            t_frame = min(dur - 0.05, max(0.0, float(offset or 0.0) + 0.25))
+            frame = clip.get_frame(t_frame)
+            img = PIL.Image.fromarray(frame).resize((64, 44), PIL.Image.Resampling.BILINEAR)
+            photo = PIL.ImageTk.PhotoImage(img)
+            self.cache_thumbs_capcut[clave] = photo
+            return photo
+        except Exception:
+            return None
+
+    def recalcular_tiempos_timeline(self):
+        acumulado = 0.0
+        for idx, item in enumerate(self.timeline_data):
+            dur = round(max(0.5, float(item.get("duracion", 2.0))), 2)
+            item["orden"] = idx + 1
+            item["duracion"] = dur
+            item["inicio"] = round(acumulado, 2)
+            item["fin"] = round(acumulado + dur, 2)
+            item.setdefault("offset", 0.0)
+            item["offset"] = round(max(0.0, float(item["offset"])), 2)
+            acumulado += dur
+        if self.timeline_data:
+            self.clip_seleccionado_idx = max(0, min(self.clip_seleccionado_idx, len(self.timeline_data) - 1))
+        else:
+            self.clip_seleccionado_idx = 0
+
     def actualizar_lista_clips_ui(self):
         for w in self.lista_clips_ui.winfo_children():
             w.destroy()
@@ -2670,96 +2961,627 @@ class StudioApp(ctk.CTk):
             self.actualizar_lista_clips_ui()
             self.guardar_cache()
 
+    def cambiar_zoom_timeline(self, factor):
+        self.zoom_px_seg = max(10.0, min(110.0, self.zoom_px_seg * factor))
+        self.dibujar_timeline_ui()
+
     def dibujar_timeline_ui(self):
-        self.mostrar_estado("Generando previsualización del Storyboard...", "orange")
-        for w in self.timeline_ui.winfo_children():
-            w.destroy()
-        self.imagenes_timeline = []
+        if not hasattr(self, "canvas_timeline"):
+            return
+        self.recalcular_tiempos_timeline()
+        c = self.canvas_timeline
+        c.delete("all")
+        self.refs_thumbs_canvas = []
 
-        renderer = VideoRenderer(self.formato_actual)
+        x0 = self.X_ENCABEZADO_TIMELINE
+        px_s = self.zoom_px_seg
+        dur_clips = self.duracion_total_timeline
+        dur_voz = float(self.duracion_total_audio or 0.0)
+        dur_max = max(dur_clips, dur_voz, 15.0)
+        ancho_total = max(840, int(x0 + (dur_max + 4.0) * px_s))
+        alto_total = 202
+        c.configure(scrollregion=(0, 0, ancho_total, alto_total))
 
-        pista_audio = ctk.CTkFrame(self.timeline_ui, fg_color="#004D40", corner_radius=0)
-        pista_audio.pack(fill="x", pady=5)
-        ctk.CTkLabel(
-            pista_audio,
-            text=f"🎵 PISTA DE VOZ (Duración: {self.duracion_total_audio:.1f}s)",
-            font=ctk.CTkFont(weight="bold"),
-        ).pack(pady=10)
+        # Fondos de las 4 bandas horizontales
+        c.create_rectangle(0, 0, ancho_total, 26, fill="#161B24", outline="")
+        c.create_rectangle(0, 27, ancho_total, 108, fill="#11151E", outline="")
+        c.create_rectangle(0, 109, ancho_total, 148, fill="#141824", outline="")
+        c.create_rectangle(0, 149, ancho_total, 200, fill="#0F171A", outline="")
 
-        ctk.CTkLabel(
-            self.timeline_ui,
-            text="🎬 STORYBOARD (Puedes Reordenar o Cambiar Clips)", anchor="w",
-        ).pack(fill="x", pady=(10, 0))
+        # Líneas divisorias horizontales
+        for y_div in (26, 108, 148):
+            c.create_line(0, y_div, ancho_total, y_div, fill="#263238", width=1)
 
-        for i, item in enumerate(self.timeline_data):
-            bloque = ctk.CTkFrame(self.timeline_ui, fg_color="#1565C0", border_color="black", border_width=1)
-            bloque.pack(fill="x", pady=2, padx=10)
+        # 1. REGLA DE TIEMPO SUPERIOR
+        paso_principal = 1 if px_s >= 45 else (2 if px_s >= 24 else (5 if px_s >= 14 else 10))
+        seg = 0.0
+        while seg <= dur_max + 2.0:
+            x = x0 + seg * px_s
+            es_principal = (int(round(seg)) % paso_principal == 0) and abs(seg - round(seg)) < 0.01
+            if es_principal:
+                c.create_line(x, 12, x, 26, fill="#78909C", width=1)
+                s_int = int(round(seg))
+                etiqueta = f"{s_int // 60}:{s_int % 60:02d}" if s_int >= 60 else f"{s_int}s"
+                c.create_text(x + 2, 3, text=etiqueta, anchor="nw", fill="#B0BEC5", font=("Segoe UI", 8, "bold"))
+            else:
+                c.create_line(x, 19, x, 26, fill="#37474F", width=1)
+            seg += 0.5 if px_s >= 30 else 1.0
 
-            img = renderer.obtener_miniatura(item["archivo"])
-            if img:
-                self.imagenes_timeline.append(img)
-                ctk.CTkLabel(bloque, image=img, text="").pack(side="left", padx=5, pady=5)
-
-            narracion_escena = item.get("narracion", "")
-            subtexto_escena = f"\n🗣️ \"{narracion_escena[:65]}...\"" if narracion_escena else ""
-            texto = (
-                f"Escena #{item['orden']} [{item['inicio']:.1f}s - {item['fin']:.1f}s] "
-                f"({item['duracion']:.1f}s)\n🎥 {os.path.basename(item['archivo'])}{subtexto_escena}"
+        # 2. PISTA 1: BLOQUES DE VIDEO CON MINIATURAS Y ASAS DE CORTE/RECORTE
+        if not self.timeline_data:
+            c.create_text(
+                x0 + 260, 68,
+                text="🎬 Pista de Video vacía — Pulsa '3. Crear Storyboard' o '➕ Insertar' para organizar tus clips aquí",
+                fill="#78909C", font=("Segoe UI", 10, "bold"),
             )
-            ctk.CTkLabel(bloque, text=texto, justify="left").pack(side="left", padx=10)
+        else:
+            for idx, item in enumerate(self.timeline_data):
+                x1 = x0 + item["inicio"] * px_s
+                x2 = max(x1 + 18, x0 + item["fin"] * px_s)
+                seleccionado = (idx == self.clip_seleccionado_idx)
 
-            frame_controles = ctk.CTkFrame(bloque, fg_color="transparent")
-            frame_controles.pack(side="right", padx=10)
+                color_fondo = "#1E3A5F" if idx % 2 == 0 else "#172E4D"
+                if seleccionado:
+                    color_fondo = "#234876"
+                color_borde = "#FFD600" if seleccionado else "#42A5F5"
+                grosor_borde = 3 if seleccionado else 1
 
-            btn_up = ctk.CTkButton(
-                frame_controles, text="⬆️", width=30, fg_color="#555555",
-                command=lambda idx=i: self.mover_clip_arriba(idx),
+                c.create_rectangle(
+                    x1 + 1, 31, x2 - 1, 104,
+                    fill=color_fondo, outline=color_borde, width=grosor_borde,
+                )
+
+                # Miniatura(s) tipo filmstrip dentro del bloque
+                thumb = self._obtener_thumb_capcut(item["archivo"], item.get("offset", 0.0))
+                if thumb and (x2 - x1) > 34:
+                    self.refs_thumbs_canvas.append(thumb)
+                    x_thumb = int(x1 + 5)
+                    while x_thumb + 64 < x2 - 8:
+                        c.create_image(x_thumb, 52, image=thumb, anchor="nw")
+                        x_thumb += 68
+                    if x_thumb == int(x1 + 5):
+                        c.create_image(int(x1 + 4), 52, image=thumb, anchor="nw")
+
+                # Banda superior del bloque con # de clip, nombre y duración
+                c.create_rectangle(x1 + 2, 32, x2 - 2, 50, fill="#0D1B2A", outline="")
+                nombre_corto = os.path.basename(item["archivo"])
+                if len(nombre_corto) > 16:
+                    nombre_corto = nombre_corto[:14] + ".."
+                off_val = float(item.get("offset", 0.0))
+                txt_off = f" (+{off_val:.1f}s)" if off_val > 0.05 else ""
+                etiqueta_clip = f"#{idx + 1} {nombre_corto} [{item['duracion']:.1f}s{txt_off}]"
+                max_chars = max(5, int((x2 - x1 - 10) / 6.2))
+                c.create_text(
+                    x1 + 6, 35,
+                    text=etiqueta_clip[:max_chars],
+                    anchor="nw",
+                    fill="#FFD54F" if seleccionado else "#FFFFFF",
+                    font=("Segoe UI", 8, "bold"),
+                )
+
+                # Asa derecha interactiva para estirar/acortar duración con el mouse
+                color_asa = "#FFD600" if seleccionado else "#64B5F6"
+                c.create_rectangle(x2 - 6, 33, x2 - 1, 102, fill=color_asa, outline="")
+                c.create_line(x2 - 3, 55, x2 - 3, 80, fill="#000000", width=1)
+
+                # 3. PISTA 2: BLOQUES DE GUION / SUBTÍTULOS SINCRONIZADOS
+                narr = item.get("narracion", "")
+                c.create_rectangle(
+                    x1 + 1, 113, x2 - 1, 144,
+                    fill="#311B92" if idx % 2 == 0 else "#4527A0",
+                    outline="#FFD54F" if seleccionado else "#7E57C2",
+                    width=2 if seleccionado else 1,
+                )
+                if narr and (x2 - x1) > 28:
+                    max_n = max(4, int((x2 - x1 - 8) / 6.0))
+                    c.create_text(
+                        x1 + 5, 121,
+                        text=f"🗣️ {narr[:max_n]}",
+                        anchor="nw",
+                        fill="#FFF59D",
+                        font=("Segoe UI", 8),
+                    )
+
+        # 4. PISTA 3: LOCUCIÓN (CON ONDA DE AUDIO VISUAL) Y MÚSICA DE FONDO
+        if dur_voz > 0.1:
+            x_fin_voz = x0 + dur_voz * px_s
+            c.create_rectangle(
+                x0, 153, x_fin_voz, 195,
+                fill="#004D40", outline="#00E676", width=1,
             )
-            btn_up.pack(side="left", padx=2)
-            if i == 0:
-                btn_up.configure(state="disabled")
-
-            btn_down = ctk.CTkButton(
-                frame_controles, text="⬇️", width=30, fg_color="#555555",
-                command=lambda idx=i: self.mover_clip_abajo(idx),
+            # Dibujar barras de onda de sonido (waveform)
+            x_onda = x0 + 6
+            semilla = 1
+            while x_onda < x_fin_voz - 4:
+                semilla = (semilla * 1103515245 + 12345) & 0x7FFFFFFF
+                altura_barra = 4 + (semilla % 14)
+                c.create_line(
+                    x_onda, 174 - altura_barra, x_onda, 174 + altura_barra,
+                    fill="#00E676", width=2,
+                )
+                x_onda += 5
+            txt_bgm = f" + 🎵 {os.path.basename(self.ruta_musica_fondo)}" if self.ruta_musica_fondo else ""
+            c.create_rectangle(x0 + 4, 155, min(x_fin_voz - 2, x0 + 290), 170, fill="#00251A", outline="")
+            c.create_text(
+                x0 + 8, 156,
+                text=f"🎙️ VOZ LOCUCIÓN ({dur_voz:.1f}s){txt_bgm}",
+                anchor="nw", fill="#A7FFEB", font=("Segoe UI", 8, "bold"),
             )
-            btn_down.pack(side="left", padx=2)
-            if i == len(self.timeline_data) - 1:
-                btn_down.configure(state="disabled")
+        else:
+            c.create_text(
+                x0 + 180, 173,
+                text="🎙️ Pista de Audio (Graba la voz en el Paso 2 para ver la onda aquí)",
+                fill="#4DB6AC", font=("Segoe UI", 9),
+            )
 
-            ctk.CTkButton(
-                frame_controles, text="🔄 Cambiar", width=60, fg_color="#E65100",
-                command=lambda idx=i: self.reemplazar_clip(idx),
-            ).pack(side="left", padx=5)
-            ctk.CTkButton(
-                frame_controles, text="▶️ Ver", width=50, fg_color="#00897B",
-                command=lambda r=item["archivo"]: self.previsualizar_clip(r),
-            ).pack(side="left", padx=2)
+        # 5. COLUMNA IZQUIERDA FIJA DE ENCABEZADOS DE PISTA
+        c.create_rectangle(0, 0, x0 - 2, alto_total, fill="#181F2C", outline="#263238")
+        c.create_text(8, 6, text="📏 TIEMPO", anchor="nw", fill="#90A4AE", font=("Segoe UI", 8, "bold"))
+        c.create_text(8, 58, text="🎬 VIDEO", anchor="nw", fill="#64B5F6", font=("Segoe UI", 9, "bold"))
+        c.create_text(8, 121, text="🗣️ SUBS", anchor="nw", fill="#CE93D8", font=("Segoe UI", 8, "bold"))
+        c.create_text(8, 166, text="🎵 AUDIO", anchor="nw", fill="#4DB6AC", font=("Segoe UI", 8, "bold"))
 
-        self.mostrar_estado("✅ Storyboard interactivo listo.", "green")
+        # 6. AGUJA ROJA (PLAYHEAD CAPCUT) Y PANEL INSPECTOR
+        self._actualizar_inspector_capcut()
+        self._actualizar_aguja_canvas()
+        if self.timeline_data and not self.reproduciendo_capcut:
+            self._mostrar_frame_capcut(self.posicion_aguja)
+
+    def _actualizar_aguja_canvas(self):
+        if not hasattr(self, "canvas_timeline"):
+            return
+        c = self.canvas_timeline
+        c.delete("aguja")
+        x_aguja = self.X_ENCABEZADO_TIMELINE + self.posicion_aguja * self.zoom_px_seg
+        # Cabezal pentagonal rojo estilo CapCut en la regla
+        c.create_polygon(
+            x_aguja - 7, 1,
+            x_aguja + 7, 1,
+            x_aguja + 7, 12,
+            x_aguja, 21,
+            x_aguja - 7, 12,
+            fill="#FF1744", outline="#FFFFFF", width=1, tags="aguja",
+        )
+        # Línea vertical roja que atraviesa todas las pistas
+        c.create_line(x_aguja, 20, x_aguja, 200, fill="#FF1744", width=2, tags="aguja")
+
+        total = max(self.duracion_total_timeline, float(self.duracion_total_audio or 0.0))
+        self.lbl_tiempo_capcut.configure(
+            text=f"⏱️ {self._formatear_seg_capcut(self.posicion_aguja)} / {self._formatear_seg_capcut(total)}"
+        )
+
+    def _formatear_seg_capcut(self, seg):
+        seg = max(0.0, float(seg))
+        m = int(seg // 60)
+        s = seg - (m * 60)
+        return f"{m:02d}:{s:04.1f}"
+
+    def _actualizar_inspector_capcut(self):
+        if not self.timeline_data:
+            self.lbl_clip_activo_capcut.configure(text="🎯 Clip: Ninguno en la línea de tiempo")
+            return
+        self.clip_seleccionado_idx = max(0, min(self.clip_seleccionado_idx, len(self.timeline_data) - 1))
+        item = self.timeline_data[self.clip_seleccionado_idx]
+        nombre = os.path.basename(item["archivo"])
+        if len(nombre) > 22:
+            nombre = nombre[:20] + ".."
+        off = float(item.get("offset", 0.0))
+        self.lbl_clip_activo_capcut.configure(
+            text=f"🎯 Clip #{item['orden']}: {nombre} | {item['inicio']:.1f}s-{item['fin']:.1f}s (Dur: {item['duracion']:.1f}s | Inicio: +{off:.1f}s)"
+        )
+
+    # ---------- Interacción con Mouse en el Lienzo Horizontal ----------
+    def _al_clic_canvas_timeline(self, evento):
+        if not hasattr(self, "canvas_timeline"):
+            return
+        if self.reproduciendo_capcut:
+            self.pausar_capcut()
+
+        x_canvas = self.canvas_timeline.canvasx(evento.x)
+        y_canvas = evento.y
+        x0 = self.X_ENCABEZADO_TIMELINE
+        if x_canvas < x0:
+            return
+
+        tiempo_clic = max(0.0, (x_canvas - x0) / self.zoom_px_seg)
+        dur_max = max(self.duracion_total_timeline, float(self.duracion_total_audio or 0.0), 0.1)
+        self.posicion_aguja = min(dur_max, tiempo_clic)
+
+        # Verificar si hizo clic en algún bloque o en su asa derecha de recorte (pista de video y=28..108)
+        self.arrastrando_borde_idx = None
+        for idx, item in enumerate(self.timeline_data):
+            x1 = x0 + item["inicio"] * self.zoom_px_seg
+            x2 = x0 + item["fin"] * self.zoom_px_seg
+            if 28 <= y_canvas <= 108 and abs(x_canvas - x2) <= 8:
+                self.clip_seleccionado_idx = idx
+                self.arrastrando_borde_idx = idx
+                self.dibujar_timeline_ui()
+                return
+            if x1 <= x_canvas <= x2:
+                self.clip_seleccionado_idx = idx
+                break
+
+        self.arrastrando_aguja = True
+        self.dibujar_timeline_ui()
+
+    def _al_arrastrar_canvas_timeline(self, evento):
+        if not hasattr(self, "canvas_timeline"):
+            return
+        x_canvas = self.canvas_timeline.canvasx(evento.x)
+        x0 = self.X_ENCABEZADO_TIMELINE
+        tiempo_mouse = max(0.0, (x_canvas - x0) / self.zoom_px_seg)
+
+        # Si está arrastrando el borde derecho de un clip -> Recorte interactivo (Trim)
+        if self.arrastrando_borde_idx is not None and 0 <= self.arrastrando_borde_idx < len(self.timeline_data):
+            item = self.timeline_data[self.arrastrando_borde_idx]
+            nueva_dur = round(max(0.6, tiempo_mouse - item["inicio"]), 2)
+            item["duracion"] = nueva_dur
+            self.posicion_aguja = item["inicio"] + nueva_dur
+            self.dibujar_timeline_ui()
+            return
+
+        # Si está arrastrando la aguja roja -> Scrubbing en tiempo real
+        if self.arrastrando_aguja:
+            dur_max = max(self.duracion_total_timeline, float(self.duracion_total_audio or 0.0), 0.1)
+            self.posicion_aguja = min(dur_max, max(0.0, tiempo_mouse))
+            self._actualizar_aguja_canvas()
+            self._mostrar_frame_capcut(self.posicion_aguja)
+
+    def _al_soltar_canvas_timeline(self, _evento):
+        if self.arrastrando_borde_idx is not None:
+            self.mostrar_estado(
+                f"↔️ Duración del Clip #{self.arrastrando_borde_idx + 1} ajustada a {self.timeline_data[self.arrastrando_borde_idx]['duracion']:.1f}s.",
+                "#00E5FF",
+            )
+        self.arrastrando_borde_idx = None
+        self.arrastrando_aguja = False
+
+    def _al_doble_clic_canvas_timeline(self, _evento):
+        if self.timeline_data and 0 <= self.clip_seleccionado_idx < len(self.timeline_data):
+            ruta = self.timeline_data[self.clip_seleccionado_idx]["archivo"]
+            self.previsualizar_clip(ruta)
+
+    def _al_rueda_canvas_timeline(self, evento):
+        direccion = -1 if evento.delta > 0 else 1
+        self.canvas_timeline.xview_scroll(direccion * 2, "units")
+
+    # ---------- Herramientas de Edición y Corte estilo CapCut ----------
+    def dividir_clip_en_aguja(self):
+        """
+        ✂️ DIVIDIR (SPLIT):
+        Parte el clip donde está la aguja roja en 2 clips independientes:
+        - Parte 1: desde inicio hasta la aguja (mantiene offset original)
+        - Parte 2: desde la aguja hasta el fin (su offset avanza exactamente lo que duró la Parte 1)
+        Si la aguja está fuera o en la orilla del clip seleccionado, divide el clip seleccionado por la mitad.
+        """
+        if not self.timeline_data:
+            self.mostrar_estado("❌ No hay clips en la barra horizontal para dividir.", "red")
+            return
+        self.pausar_capcut()
+
+        # Buscar si la aguja está dentro de algún clip con margen de al menos 0.4s a cada lado
+        idx_objetivo = None
+        punto_corte_local = None
+        for idx, item in enumerate(self.timeline_data):
+            if item["inicio"] + 0.35 < self.posicion_aguja < item["fin"] - 0.35:
+                idx_objetivo = idx
+                punto_corte_local = round(self.posicion_aguja - item["inicio"], 2)
+                break
+
+        # Si la aguja estaba en 0.0 o muy en el borde, partir el clip seleccionado a la mitad
+        if idx_objetivo is None:
+            idx_objetivo = max(0, min(self.clip_seleccionado_idx, len(self.timeline_data) - 1))
+            item = self.timeline_data[idx_objetivo]
+            if item["duracion"] < 1.0:
+                self.mostrar_estado("⚠️ Este clip ya es muy corto (< 1.0s) para dividirlo más.", "orange")
+                return
+            punto_corte_local = round(item["duracion"] / 2.0, 2)
+
+        orig = self.timeline_data[idx_objetivo]
+        dur_parte1 = round(max(0.5, punto_corte_local), 2)
+        dur_parte2 = round(max(0.5, orig["duracion"] - dur_parte1), 2)
+        offset_orig = float(orig.get("offset", 0.0))
+
+        clip_parte1 = {
+            "orden": orig["orden"],
+            "archivo": orig["archivo"],
+            "inicio": orig["inicio"],
+            "fin": round(orig["inicio"] + dur_parte1, 2),
+            "duracion": dur_parte1,
+            "offset": offset_orig,
+            "narracion": orig.get("narracion", ""),
+        }
+        clip_parte2 = {
+            "orden": orig["orden"] + 1,
+            "archivo": orig["archivo"],
+            "inicio": round(orig["inicio"] + dur_parte1, 2),
+            "fin": orig["fin"],
+            "duracion": dur_parte2,
+            "offset": round(offset_orig + dur_parte1, 2),
+            "narracion": orig.get("narracion", ""),
+        }
+
+        self.timeline_data[idx_objetivo:idx_objetivo + 1] = [clip_parte1, clip_parte2]
+        self.clip_seleccionado_idx = idx_objetivo + 1
+        self.posicion_aguja = clip_parte2["inicio"]
+        self.dibujar_timeline_ui()
+        self.mostrar_estado(
+            f"✂️ Clip dividido en 2 partes ({dur_parte1:.1f}s y {dur_parte2:.1f}s). Ahora puedes borrar, cambiar o mover cualquiera de las mitades.",
+            "#00FF00",
+        )
+
+    def mover_clip_izquierda(self):
+        if not self.timeline_data or self.clip_seleccionado_idx <= 0:
+            return
+        idx = self.clip_seleccionado_idx
+        self.timeline_data[idx - 1], self.timeline_data[idx] = (
+            self.timeline_data[idx],
+            self.timeline_data[idx - 1],
+        )
+        self.clip_seleccionado_idx = idx - 1
+        self.recalcular_tiempos_timeline()
+        self.posicion_aguja = self.timeline_data[self.clip_seleccionado_idx]["inicio"]
+        self.dibujar_timeline_ui()
+        self.mostrar_estado(f"⬅️ Clip movido a la posición #{self.clip_seleccionado_idx + 1}.", "#00E5FF")
+
+    def mover_clip_derecha(self):
+        if not self.timeline_data or self.clip_seleccionado_idx >= len(self.timeline_data) - 1:
+            return
+        idx = self.clip_seleccionado_idx
+        self.timeline_data[idx + 1], self.timeline_data[idx] = (
+            self.timeline_data[idx],
+            self.timeline_data[idx + 1],
+        )
+        self.clip_seleccionado_idx = idx + 1
+        self.recalcular_tiempos_timeline()
+        self.posicion_aguja = self.timeline_data[self.clip_seleccionado_idx]["inicio"]
+        self.dibujar_timeline_ui()
+        self.mostrar_estado(f"➡️ Clip movido a la posición #{self.clip_seleccionado_idx + 1}.", "#00E5FF")
 
     def mover_clip_arriba(self, idx):
-        if idx > 0:
-            self.timeline_data[idx]["archivo"], self.timeline_data[idx - 1]["archivo"] = (
-                self.timeline_data[idx - 1]["archivo"],
-                self.timeline_data[idx]["archivo"],
-            )
-            self.dibujar_timeline_ui()
+        self.clip_seleccionado_idx = idx
+        self.mover_clip_izquierda()
 
     def mover_clip_abajo(self, idx):
-        if idx < len(self.timeline_data) - 1:
-            self.timeline_data[idx]["archivo"], self.timeline_data[idx + 1]["archivo"] = (
-                self.timeline_data[idx + 1]["archivo"],
-                self.timeline_data[idx]["archivo"],
-            )
-            self.dibujar_timeline_ui()
+        self.clip_seleccionado_idx = idx
+        self.mover_clip_derecha()
 
     def reemplazar_clip(self, idx):
-        if len(self.pool_videos) > 1:
-            opciones = [v for v in self.pool_videos if v != self.timeline_data[idx]["archivo"]]
-            if opciones:
-                self.timeline_data[idx]["archivo"] = random.choice(opciones)
-                self.dibujar_timeline_ui()
+        self.clip_seleccionado_idx = idx
+        self.reemplazar_clip_seleccionado()
+
+    def reemplazar_clip_seleccionado(self):
+        if not self.timeline_data:
+            return
+        idx = self.clip_seleccionado_idx
+        actual = self.timeline_data[idx]["archivo"]
+        opciones = [v for v in self.pool_videos if v != actual and os.path.exists(v)]
+        if opciones:
+            if actual in self.pool_videos:
+                pos_pool = (self.pool_videos.index(actual) + 1) % len(self.pool_videos)
+                nuevo = self.pool_videos[pos_pool]
+            else:
+                nuevo = random.choice(opciones)
+            self.timeline_data[idx]["archivo"] = nuevo
+            self.timeline_data[idx]["offset"] = 0.0
+            self.dibujar_timeline_ui()
+            self.mostrar_estado(f"🔄 Clip #{idx + 1} cambiado por: {os.path.basename(nuevo)}", "#00E5FF")
+        else:
+            self.elegir_reemplazo_pc_timeline()
+
+    def elegir_reemplazo_pc_timeline(self):
+        if not self.timeline_data:
+            self.mostrar_estado("❌ Primero crea el Storyboard o inserta un clip.", "red")
+            return
+        archivo = filedialog.askopenfilename(filetypes=[("Videos", "*.mp4 *.mov *.mkv *.webm")])
+        if archivo and os.path.exists(archivo):
+            if archivo not in self.pool_videos:
+                self.pool_videos.append(archivo)
+                self.actualizar_lista_clips_ui()
+            idx = self.clip_seleccionado_idx
+            self.timeline_data[idx]["archivo"] = archivo
+            self.timeline_data[idx]["offset"] = 0.0
+            self.dibujar_timeline_ui()
+            self.mostrar_estado(f"📂 Clip #{idx + 1} reemplazado por: {os.path.basename(archivo)}", "#00FF00")
+
+    def insertar_clip_timeline(self):
+        self.pausar_capcut()
+        archivo = filedialog.askopenfilename(
+            title="Selecciona el video para insertar en la barra horizontal",
+            filetypes=[("Videos", "*.mp4 *.mov *.mkv *.webm")],
+        )
+        if not archivo and self.pool_videos:
+            archivo = random.choice(self.pool_videos)
+        if not archivo or not os.path.exists(archivo):
+            return
+        if archivo not in self.pool_videos:
+            self.pool_videos.append(archivo)
+            self.actualizar_lista_clips_ui()
+
+        nuevo_item = {
+            "orden": len(self.timeline_data) + 1,
+            "archivo": archivo,
+            "inicio": 0.0,
+            "fin": 3.0,
+            "duracion": 3.0,
+            "offset": 0.0,
+            "narracion": "",
+        }
+        if self.timeline_data:
+            pos_ins = min(len(self.timeline_data), self.clip_seleccionado_idx + 1)
+            self.timeline_data.insert(pos_ins, nuevo_item)
+            self.clip_seleccionado_idx = pos_ins
+        else:
+            self.timeline_data.append(nuevo_item)
+            self.clip_seleccionado_idx = 0
+
+        self.dibujar_timeline_ui()
+        self.cambiar_estado_boton(self.btn_exp_mp4, "normal")
+        self.cambiar_estado_boton(self.btn_exp_capcut, "normal")
+        self.mostrar_estado(f"➕ Clip insertado en la posición #{self.clip_seleccionado_idx + 1}.", "#00FF00")
+
+    def duplicar_clip_timeline(self):
+        if not self.timeline_data:
+            return
+        idx = self.clip_seleccionado_idx
+        copia = dict(self.timeline_data[idx])
+        self.timeline_data.insert(idx + 1, copia)
+        self.clip_seleccionado_idx = idx + 1
+        self.dibujar_timeline_ui()
+        self.mostrar_estado(f"📄 Clip #{idx + 1} duplicado.", "#00E5FF")
+
+    def eliminar_clip_timeline(self):
+        if not self.timeline_data:
+            return
+        if len(self.timeline_data) == 1:
+            self.mostrar_estado("⚠️ Debe quedar al menos 1 clip en el Timeline.", "orange")
+            return
+        idx = self.clip_seleccionado_idx
+        eliminado = self.timeline_data.pop(idx)
+        self.clip_seleccionado_idx = max(0, min(idx, len(self.timeline_data) - 1))
+        self.dibujar_timeline_ui()
+        self.mostrar_estado(f"🗑️ Clip eliminado ({os.path.basename(eliminado['archivo'])}).", "yellow")
+
+    def ajustar_duracion_clip_sel(self, delta_seg):
+        if not self.timeline_data:
+            return
+        idx = self.clip_seleccionado_idx
+        nueva_dur = round(max(0.5, float(self.timeline_data[idx]["duracion"]) + float(delta_seg)), 2)
+        self.timeline_data[idx]["duracion"] = nueva_dur
+        self.dibujar_timeline_ui()
+        self.mostrar_estado(f"⏱️ Clip #{idx + 1}: duración ajustada a {nueva_dur:.1f}s.", "#00E5FF")
+
+    def ajustar_offset_clip_sel(self, delta_seg):
+        if not self.timeline_data:
+            return
+        idx = self.clip_seleccionado_idx
+        item = self.timeline_data[idx]
+        nuevo_off = round(max(0.0, float(item.get("offset", 0.0)) + float(delta_seg)), 2)
+        item["offset"] = nuevo_off
+        self.posicion_aguja = item["inicio"]
+        self.dibujar_timeline_ui()
+        self.mostrar_estado(
+            f"🎞️ Clip #{idx + 1}: punto de inicio dentro del video movido a +{nuevo_off:.1f}s.",
+            "#00E5FF",
+        )
+
+    def ajustar_todo_al_audio(self):
+        """Escala proporcionalmente la duración de todos los clips para cuadrar al 100% con la pista de voz."""
+        if not self.timeline_data or self.duracion_total_audio <= 0.2:
+            self.mostrar_estado("⚠️ Primero genera la voz (Paso 2) y el Storyboard.", "orange")
+            return
+        suma_actual = self.duracion_total_timeline
+        if suma_actual <= 0.1:
+            return
+        factor = float(self.duracion_total_audio) / suma_actual
+        for item in self.timeline_data:
+            item["duracion"] = round(max(0.5, item["duracion"] * factor), 2)
+        self.recalcular_tiempos_timeline()
+        # Ajustar diferencia de redondeo en el último clip
+        dif = round(float(self.duracion_total_audio) - self.duracion_total_timeline, 2)
+        if abs(dif) > 0.02 and self.timeline_data:
+            self.timeline_data[-1]["duracion"] = round(max(0.5, self.timeline_data[-1]["duracion"] + dif), 2)
+        self.dibujar_timeline_ui()
+        self.mostrar_estado(
+            f"⚖️ Todos los clips se sincronizaron exactamente a los {self.duracion_total_audio:.1f}s de tu locución.",
+            "#00FF00",
+        )
+
+    # ---------- Reproductor en Vivo Integrado en el Timeline CapCut ----------
+    def _segmento_capcut_en(self, t):
+        for idx, seg in enumerate(self.timeline_data):
+            if seg["inicio"] <= t <= seg["fin"] + 0.02:
+                return idx, seg, max(0.0, t - seg["inicio"])
+        ultimo = self.timeline_data[-1]
+        return len(self.timeline_data) - 1, ultimo, max(0.0, ultimo["duracion"] - 0.05)
+
+    def _mostrar_frame_capcut(self, t):
+        if not self.timeline_data:
+            return
+        try:
+            idx, seg, t_local = self._segmento_capcut_en(t)
+            clip = self._obtener_clip_capcut(seg["archivo"])
+            t_clip = float(seg.get("offset", 0.0)) + t_local
+            if clip.duration and clip.duration > 0.1:
+                t_clip = t_clip % max(0.05, clip.duration - 0.08)
+            frame = clip.get_frame(max(0.0, t_clip))
+            img = PIL.Image.fromarray(frame)
+
+            ancho_m, alto_m = (82, 144) if self.es_vertical else (190, 108)
+            ratio_obj = ancho_m / alto_m
+            w, h = img.size
+            if (w / h) > ratio_obj:
+                nw = int(h * ratio_obj)
+                x1 = (w - nw) // 2
+                img = img.crop((x1, 0, x1 + nw, h))
+            else:
+                nh = int(w / ratio_obj)
+                y1 = (h - nh) // 2
+                img = img.crop((0, y1, w, y1 + nh))
+            img = img.resize((ancho_m, alto_m), PIL.Image.Resampling.BILINEAR)
+
+            self.foto_monitor_capcut = ctk.CTkImage(light_image=img, dark_image=img, size=(ancho_m, alto_m))
+            self.lbl_monitor_capcut.configure(image=self.foto_monitor_capcut, text="")
+            narr = seg.get("narracion", "")
+            self.lbl_sub_capcut.configure(
+                text=f"🗣️ Clip #{idx + 1}: \"{narr[:115]}\"" if narr else f"🎬 Viendo Clip #{idx + 1}: {os.path.basename(seg['archivo'])}"
+            )
+        except Exception:
+            logging.exception("Error mostrando frame en monitor CapCut")
+
+    def alternar_play_capcut(self):
+        if self.reproduciendo_capcut:
+            self.pausar_capcut()
+        else:
+            self.reproducir_capcut()
+
+    def reproducir_capcut(self):
+        if not self.timeline_data:
+            self.mostrar_estado("❌ Primero crea el Storyboard (Paso 3) para reproducir el Timeline.", "red")
+            return
+        dur_max = self.duracion_total_timeline
+        if self.posicion_aguja >= dur_max - 0.08:
+            self.posicion_aguja = 0.0
+        self.reproduciendo_capcut = True
+        self.inicio_reloj_capcut = time.perf_counter() - self.posicion_aguja
+        if os.path.exists(self.ARCHIVO_VOZ):
+            if self.audio_capcut is None:
+                self.audio_capcut = ReproductorAudioMCI(self.ARCHIVO_VOZ)
+            self.audio_capcut.reproducir_desde(self.posicion_aguja)
+        self.btn_play_capcut.configure(text="⏸️ Pausa", fg_color="#F9A825")
+        self._tick_capcut()
+
+    def pausar_capcut(self):
+        self.reproduciendo_capcut = False
+        if self.audio_capcut:
+            self.audio_capcut.pausar()
+        if hasattr(self, "btn_play_capcut"):
+            self.btn_play_capcut.configure(text="▶️ Play", fg_color="#2E7D32")
+
+    def reiniciar_aguja_capcut(self):
+        estaba = self.reproduciendo_capcut
+        self.pausar_capcut()
+        self.posicion_aguja = 0.0
+        self.clip_seleccionado_idx = 0
+        self.dibujar_timeline_ui()
+        if estaba:
+            self.reproducir_capcut()
+
+    def _tick_capcut(self):
+        if not self.reproduciendo_capcut:
+            return
+        t0 = time.perf_counter()
+        self.posicion_aguja = t0 - self.inicio_reloj_capcut
+        dur_max = self.duracion_total_timeline
+        if self.posicion_aguja >= dur_max:
+            self.posicion_aguja = dur_max
+            self._actualizar_aguja_canvas()
+            self.pausar_capcut()
+            return
+        self._actualizar_aguja_canvas()
+        self._mostrar_frame_capcut(self.posicion_aguja)
+        gastado = int((time.perf_counter() - t0) * 1000)
+        self.after(max(20, 66 - gastado), self._tick_capcut)
 
     # ==========================================
     # HILOS
@@ -3523,12 +4345,15 @@ REGLAS DE ORO:
                     "inicio": tiempo_act,
                     "fin": tiempo_act + duracion_real,
                     "duracion": duracion_real,
+                    "offset": 0.0,
                     "narracion": narracion_asociada,
                 })
                 tiempo_act += duracion_real
                 orden += 1
                 idx_clip += 1
 
+            self.clip_seleccionado_idx = 0
+            self.posicion_aguja = 0.0
             self.after(0, self.dibujar_timeline_ui)
             self.after(0, lambda: self.pestanas.set("🎞️ 3. Storyboard (Timeline)"))
             self.cambiar_estado_boton(self.btn_exp_mp4, "normal")
@@ -3545,6 +4370,7 @@ REGLAS DE ORO:
             self.mostrar_estado("❌ Primero crea el storyboard.", "red")
             return
 
+        self.pausar_capcut()
         self.mostrar_estado("Renderizando MP4 Final...", "yellow")
         self.cambiar_estado_boton(self.btn_exp_mp4, "disabled")
 
@@ -3555,7 +4381,7 @@ REGLAS DE ORO:
         video_final = None
         try:
             clips_finales = [
-                renderer.procesar_recorte_clip(i["archivo"], i["duracion"])
+                renderer.procesar_recorte_clip(i["archivo"], i["duracion"], offset=i.get("offset", 0.0))
                 for i in self.timeline_data
             ]
             audio_clip = AudioFileClip(self.ARCHIVO_VOZ)
@@ -3616,6 +4442,7 @@ REGLAS DE ORO:
             self.mostrar_estado("❌ Primero crea el storyboard.", "red")
             return
 
+        self.pausar_capcut()
         self.mostrar_estado("Preparando Carpeta...", "yellow")
         self.cambiar_estado_boton(self.btn_exp_capcut, "disabled")
         renderer = VideoRenderer(self.formato_actual)
@@ -3624,7 +4451,9 @@ REGLAS DE ORO:
             os.makedirs(carpeta, exist_ok=True)
             shutil.copy(self.ARCHIVO_VOZ, os.path.join(carpeta, "00_PISTA_AUDIO.mp3"))
             for item in self.timeline_data:
-                clip_procesado = renderer.procesar_recorte_clip(item["archivo"], item["duracion"])
+                clip_procesado = renderer.procesar_recorte_clip(
+                    item["archivo"], item["duracion"], offset=item.get("offset", 0.0)
+                )
                 clip_procesado.write_videofile(
                     os.path.join(carpeta, f"CLIP_{item['orden']:02d}.mp4"),
                     fps=24, codec="libx264", logger=None,
