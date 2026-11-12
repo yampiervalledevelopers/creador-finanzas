@@ -242,6 +242,66 @@ def limpiar_nombre(texto):
     return re.sub(r"[^a-zA-Z0-9_-]", "_", texto)[:80]
 
 
+class HistorialClipsUsados:
+    """
+    Memoria PERSISTENTE (entre videos y sesiones) de los clips de stock ya usados.
+    Evita que un video nuevo vuelva a mostrar los mismos clips de Pexels/Pixabay
+    que ya salieron en videos anteriores (aunque las palabras clave se parezcan).
+    """
+
+    ARCHIVO = "historial_clips_usados.json"
+    MAX_REGISTROS = 5000
+    _lock = threading.Lock()
+
+    def __init__(self):
+        self.usados = []
+        self._set = set()
+        try:
+            if os.path.exists(self.ARCHIVO):
+                with open(self.ARCHIVO, "r", encoding="utf-8") as f:
+                    self.usados = [str(x) for x in json.load(f)]
+                    self._set = set(self.usados)
+        except Exception:
+            logging.exception("No se pudo leer el historial de clips usados")
+
+    @staticmethod
+    def clave(fuente, video_obj, url=""):
+        vid_id = video_obj.get("id") if isinstance(video_obj, dict) else None
+        if vid_id:
+            return f"{fuente}:{vid_id}"
+        return f"url:{url}"
+
+    def ya_usado(self, clave):
+        return clave in self._set
+
+    def registrar(self, clave):
+        with self._lock:
+            if clave in self._set:
+                return
+            self.usados.append(clave)
+            self._set.add(clave)
+            if len(self.usados) > self.MAX_REGISTROS:
+                sobrantes = self.usados[: len(self.usados) - self.MAX_REGISTROS]
+                self.usados = self.usados[-self.MAX_REGISTROS:]
+                for s in sobrantes:
+                    self._set.discard(s)
+            try:
+                with open(self.ARCHIVO, "w", encoding="utf-8") as f:
+                    json.dump(self.usados, f)
+            except Exception:
+                logging.exception("No se pudo guardar el historial de clips usados")
+
+    def limpiar(self):
+        with self._lock:
+            self.usados = []
+            self._set = set()
+            try:
+                if os.path.exists(self.ARCHIVO):
+                    os.remove(self.ARCHIVO)
+            except Exception:
+                pass
+
+
 # ==========================================
 # SERVICIOS (lógica separada de la GUI)
 # ==========================================
@@ -684,7 +744,7 @@ class PexelsService:
             raise ValueError("Falta la API key de Pexels.")
         self.api_key = api_key
 
-    def buscar_videos(self, keyword, cantidad, orientacion):
+    def buscar_videos(self, keyword, cantidad, orientacion, pagina=1):
         resp = requests.get(
             "https://api.pexels.com/videos/search",
             params={
@@ -692,6 +752,7 @@ class PexelsService:
                 "per_page": cantidad,
                 "orientation": orientacion,
                 "size": "medium",
+                "page": max(1, int(pagina)),
             },
             headers={"Authorization": self.api_key},
             timeout=REQUEST_TIMEOUT,
@@ -745,18 +806,22 @@ class PixabayService:
             raise ValueError("Falta la API key de Pixabay (es 100% gratis en pixabay.com/api/docs/).")
         self.api_key = api_key
 
-    def buscar_videos(self, keyword, cantidad=3):
+    def buscar_videos(self, keyword, cantidad=3, pagina=1):
         resp = requests.get(
             "https://pixabay.com/api/videos/",
             params={
                 "key": self.api_key,
-                "q": keyword,
+                "q": keyword[:95],
                 "per_page": max(3, cantidad),
+                "page": max(1, int(pagina)),
                 "video_type": "film",
                 "safesearch": "true",
             },
             timeout=REQUEST_TIMEOUT,
         )
+        if resp.status_code == 400:
+            # Pixabay devuelve 400 cuando la página pedida no existe (no hay más resultados)
+            return []
         resp.raise_for_status()
         return resp.json().get("hits", [])
 
@@ -2514,11 +2579,13 @@ class StudioApp(ctk.CTk):
             command=self.mover_clip_derecha,
         ).pack(side="left", padx=2)
 
-        ctk.CTkButton(
-            fila_tools, text="🔄 Rotar Clip", width=84, height=27,
-            fg_color="#E65100", font=ctk.CTkFont(size=11),
-            command=self.reemplazar_clip_seleccionado,
-        ).pack(side="left", padx=2)
+        self.btn_reemplazo_auto = ctk.CTkButton(
+            fila_tools, text="🔎 Reemplazar Auto", width=118, height=27,
+            fg_color="#E65100", hover_color="#BF360C",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=lambda: self.reemplazar_clip_auto(),
+        )
+        self.btn_reemplazo_auto.pack(side="left", padx=2)
 
         ctk.CTkButton(
             fila_tools, text="📂 Elegir PC", width=78, height=27,
@@ -2598,7 +2665,7 @@ class StudioApp(ctk.CTk):
         # Fila 4: Narración / Subtítulo en el punto de la aguja
         self.lbl_sub_capcut = ctk.CTkLabel(
             frame_inspector,
-            text="💡 Haz clic en los bloques horizontales para seleccionarlos, mueve la aguja roja | y usa '✂️ Dividir' para hacer cortes.",
+            text="💡 Clic = seleccionar | Doble clic en un clip = 🔎 reemplazarlo automáticamente según su subtítulo | Clic derecho = más opciones",
             font=ctk.CTkFont(size=11),
             text_color="#CFD8DC",
             anchor="w",
@@ -2629,6 +2696,7 @@ class StudioApp(ctk.CTk):
         self.canvas_timeline.bind("<B1-Motion>", self._al_arrastrar_canvas_timeline)
         self.canvas_timeline.bind("<ButtonRelease-1>", self._al_soltar_canvas_timeline)
         self.canvas_timeline.bind("<Double-Button-1>", self._al_doble_clic_canvas_timeline)
+        self.canvas_timeline.bind("<Button-3>", self._menu_contextual_clip)
         self.canvas_timeline.bind("<MouseWheel>", self._al_rueda_canvas_timeline)
 
         # Contenedor auxiliar por compatibilidad
@@ -3166,8 +3234,10 @@ class StudioApp(ctk.CTk):
         if len(nombre) > 22:
             nombre = nombre[:20] + ".."
         off = float(item.get("offset", 0.0))
+        kw = (item.get("keyword") or "").strip()
+        txt_kw = f" | 🔎 \"{kw[:22]}\"" if kw else ""
         self.lbl_clip_activo_capcut.configure(
-            text=f"🎯 Clip #{item['orden']}: {nombre} | {item['inicio']:.1f}s-{item['fin']:.1f}s (Dur: {item['duracion']:.1f}s | Inicio: +{off:.1f}s)"
+            text=f"🎯 Clip #{item['orden']}: {nombre} | {item['inicio']:.1f}s-{item['fin']:.1f}s (Dur: {item['duracion']:.1f}s | Inicio: +{off:.1f}s){txt_kw}"
         )
 
     # ---------- Interacción con Mouse en el Lienzo Horizontal ----------
@@ -3236,10 +3306,192 @@ class StudioApp(ctk.CTk):
         self.arrastrando_borde_idx = None
         self.arrastrando_aguja = False
 
-    def _al_doble_clic_canvas_timeline(self, _evento):
-        if self.timeline_data and 0 <= self.clip_seleccionado_idx < len(self.timeline_data):
-            ruta = self.timeline_data[self.clip_seleccionado_idx]["archivo"]
-            self.previsualizar_clip(ruta)
+    def _idx_clip_en_evento(self, evento):
+        """Devuelve el índice del clip bajo el mouse (pistas de VIDEO o SUBS), o None."""
+        x_canvas = self.canvas_timeline.canvasx(evento.x)
+        x0 = self.X_ENCABEZADO_TIMELINE
+        if x_canvas < x0 or not (28 <= evento.y <= 148):
+            return None
+        for idx, item in enumerate(self.timeline_data):
+            x1 = x0 + item["inicio"] * self.zoom_px_seg
+            x2 = x0 + item["fin"] * self.zoom_px_seg
+            if x1 <= x_canvas <= x2:
+                return idx
+        return None
+
+    def _al_doble_clic_canvas_timeline(self, evento):
+        idx = self._idx_clip_en_evento(evento)
+        if idx is not None:
+            self.arrastrando_borde_idx = None
+            self.arrastrando_aguja = False
+            self.reemplazar_clip_auto(idx)
+
+    def _menu_contextual_clip(self, evento):
+        idx = self._idx_clip_en_evento(evento)
+        if idx is None:
+            return
+        self.pausar_capcut()
+        self.clip_seleccionado_idx = idx
+        self.dibujar_timeline_ui()
+        item = self.timeline_data[idx]
+        menu = tk.Menu(self, tearoff=0, bg="#1E2530", fg="#FFFFFF",
+                       activebackground="#E65100", activeforeground="#FFFFFF", font=("Segoe UI", 10))
+        menu.add_command(
+            label=f"🔎 Reemplazar automático (busca: \"{self._consulta_visible(item)}\")",
+            command=lambda: self.reemplazar_clip_auto(idx),
+        )
+        menu.add_command(label="✏️ Reemplazar buscando con mi propia palabra...",
+                         command=lambda: self.reemplazar_clip_con_palabra(idx))
+        menu.add_command(label="📂 Reemplazar con un video de mi PC...", command=self.elegir_reemplazo_pc_timeline)
+        menu.add_command(label="🔄 Rotar con otro clip ya descargado", command=self.reemplazar_clip_seleccionado)
+        menu.add_separator()
+        menu.add_command(label="▶️ Ver este clip", command=lambda: self.previsualizar_clip(item["archivo"]))
+        menu.add_command(label="✂️ Dividir en la aguja", command=self.dividir_clip_en_aguja)
+        menu.add_command(label="📄 Duplicar", command=self.duplicar_clip_timeline)
+        menu.add_command(label="🗑️ Eliminar", command=self.eliminar_clip_timeline)
+        try:
+            menu.tk_popup(evento.x_root, evento.y_root)
+        finally:
+            menu.grab_release()
+
+    def _consulta_visible(self, item):
+        kw = (item.get("keyword") or "").strip()
+        if kw:
+            return kw[:40]
+        narr = (item.get("narracion") or "").strip()
+        return (narr[:37] + "...") if len(narr) > 40 else (narr or "tema del video")
+
+    def _generar_consulta_para_clip(self, item):
+        """
+        Obtiene la frase de búsqueda para el clip:
+        1) La keyword visual en inglés que la IA asignó a esa escena del guion.
+        2) Si no existe, convierte el subtítulo (narración) en 2-4 palabras visuales en inglés con OpenAI.
+        3) Si no hay OpenAI, usa las palabras más importantes del subtítulo.
+        """
+        kw = (item.get("keyword") or "").strip()
+        if kw:
+            return kw
+        narr = (item.get("narracion") or "").strip()
+        if narr:
+            key_openai = self.entrada_openai.get().strip()
+            if key_openai:
+                try:
+                    service = OpenAIService(key_openai)
+                    resp = service.client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content": (
+                                "Convert the narration into a 2-4 word English search query for stock video "
+                                "(Pexels/Pixabay) that visually represents it. Concrete, filmable things only. "
+                                "Reply with ONLY the query, no quotes."
+                            )},
+                            {"role": "user", "content": narr[:500]},
+                        ],
+                        max_tokens=15,
+                        temperature=0.4,
+                    )
+                    consulta = (resp.choices[0].message.content or "").strip().strip('"').strip("'")
+                    if consulta:
+                        item["keyword"] = consulta
+                        return consulta
+                except Exception:
+                    logging.exception("No se pudo traducir el subtítulo a keyword visual")
+            palabras = [p for p in re.findall(r"[A-Za-zÁÉÍÓÚáéíóúÑñ]{5,}", narr)]
+            if palabras:
+                return " ".join(sorted(palabras, key=len, reverse=True)[:3])
+        if self.keywords_actuales:
+            return random.choice(self.keywords_actuales)
+        return self.entrada_tema.get().strip() or "cinematic"
+
+    def reemplazar_clip_con_palabra(self, idx=None):
+        if not self.timeline_data:
+            return
+        idx = self.clip_seleccionado_idx if idx is None else idx
+        dialogo = ctk.CTkInputDialog(
+            title="✏️ Buscar clip con tu propia palabra",
+            text=(
+                f"Clip #{idx + 1} — Subtítulo:\n\"{(self.timeline_data[idx].get('narracion') or '')[:120]}\"\n\n"
+                "Escribe qué quieres ver (mejor en inglés, ej: 'gold coins falling'):"
+            ),
+        )
+        consulta = (dialogo.get_input() or "").strip()
+        if consulta:
+            self.timeline_data[idx]["keyword"] = consulta
+            self.reemplazar_clip_auto(idx, consulta_manual=consulta)
+
+    def reemplazar_clip_auto(self, idx=None, consulta_manual=None):
+        """
+        🔎 Reemplaza el clip por uno NUEVO buscado automáticamente con la palabra/frase de su subtítulo.
+        Cada vez que lo pulses trae un clip distinto (nunca repite los ya usados).
+        """
+        if not self.timeline_data:
+            self.mostrar_estado("❌ Primero crea el Storyboard (Paso 3).", "red")
+            return
+        if getattr(self, "_reemplazo_en_curso", False):
+            self.mostrar_estado("⏳ Espera, ya estoy buscando un clip...", "orange")
+            return
+        if not self.entrada_pexels.get().strip() and not self.entrada_pixabay.get().strip():
+            self.mostrar_estado("❌ Para reemplazar automáticamente necesitas tu API Key de Pexels o Pixabay.", "red")
+            return
+
+        idx = self.clip_seleccionado_idx if idx is None else idx
+        idx = max(0, min(idx, len(self.timeline_data) - 1))
+        self.clip_seleccionado_idx = idx
+        self.pausar_capcut()
+        self._reemplazo_en_curso = True
+        self.btn_reemplazo_auto.configure(state="disabled", text="⏳ Buscando...")
+        item_ref = self.timeline_data[idx]
+        archivo_actual = item_ref["archivo"]
+
+        def _trabajo():
+            ruta_nueva = None
+            consulta = consulta_manual
+            try:
+                if not consulta:
+                    self.mostrar_estado(f"🧠 Analizando el subtítulo del Clip #{idx + 1}...", "orange")
+                    consulta = self._generar_consulta_para_clip(item_ref)
+                self.mostrar_estado(f"🔎 Buscando clip nuevo para Clip #{idx + 1}: \"{consulta}\"...", "yellow")
+                fuente = self.menu_fuente_visual.get()
+                orden = ["pixabay", "pexels"] if fuente.startswith("Pixabay") else ["pexels", "pixabay"]
+                excluir = set(self.pool_videos) | {archivo_actual}
+                rutas = self._descargar_stock_unico(
+                    consulta, idx, orden, 1, prefijo="reemplazo", excluir_archivos=excluir,
+                )
+                ruta_nueva = rutas[0] if rutas else None
+            except Exception as e:
+                logging.exception("Error reemplazando clip automáticamente")
+                self.mostrar_estado(f"❌ Error buscando clip: {e}", "red")
+
+            def _aplicar():
+                self._reemplazo_en_curso = False
+                self.btn_reemplazo_auto.configure(state="normal", text="🔎 Reemplazar Auto")
+                if not ruta_nueva:
+                    self.mostrar_estado(
+                        f"⚠️ No encontré clips nuevos para \"{consulta}\". Prueba clic derecho → '✏️ mi propia palabra'.",
+                        "orange",
+                    )
+                    return
+                # El clip pudo moverse de posición mientras buscaba: localizarlo por referencia
+                pos = next((i for i, it in enumerate(self.timeline_data) if it is item_ref), None)
+                if pos is None:
+                    return
+                item_ref["archivo"] = ruta_nueva
+                item_ref["offset"] = 0.0
+                if ruta_nueva not in self.pool_videos:
+                    self.pool_videos.append(ruta_nueva)
+                self.clip_seleccionado_idx = pos
+                self.posicion_aguja = item_ref.get("inicio", self.posicion_aguja)
+                self.actualizar_lista_clips_ui()
+                self.guardar_cache()
+                self.dibujar_timeline_ui()
+                self.mostrar_estado(
+                    f"✅ Clip #{pos + 1} reemplazado por uno nuevo de \"{consulta}\". (Doble clic otra vez = otra opción)",
+                    "#00FF00",
+                )
+
+            self.after(0, _aplicar)
+
+        threading.Thread(target=_trabajo, daemon=True).start()
 
     def _al_rueda_canvas_timeline(self, evento):
         direccion = -1 if evento.delta > 0 else 1
@@ -3775,6 +4027,17 @@ REGLAS DE ORO:
             with open(self.ARCHIVO_HISTORIAL, "w", encoding="utf-8") as f:
                 f.write(guion_generado)
 
+            # NUEVO GUION = NUEVO VIDEO: se descartan los clips y el storyboard del video anterior
+            # para que jamás se mezclen clips de otro tema en este video.
+            self.pool_videos = []
+            self.timeline_data = []
+            self.clip_seleccionado_idx = 0
+            self.posicion_aguja = 0.0
+            self.after(0, self.pausar_capcut)
+            self.after(0, self.cerrar_cache_clips_capcut)
+            self.after(0, self.actualizar_lista_clips_ui)
+            self.after(0, self.dibujar_timeline_ui)
+
             self.guardar_cache()
             num_palabras = len(guion_generado.split())
             self.mostrar_estado(
@@ -3854,6 +4117,16 @@ REGLAS DE ORO:
         try:
             # Limpiamos el pool anterior para que el nuevo video quede 100% sincronizado en orden
             self.pool_videos = []
+            self.timeline_data = []
+            self.reproduciendo_capcut = False
+            if self.audio_capcut:
+                try:
+                    self.audio_capcut.pausar()
+                except Exception:
+                    pass
+            # Cerrar lectores de video abiertos (en Windows bloquean la sobrescritura de archivos)
+            self.cerrar_cache_clips_capcut()
+            self.after(0, self.dibujar_timeline_ui)
             if "Híbrido Viral" in fuente:
                 self.generar_clips_hibrido_viral()
             elif fuente.startswith("Combo Gratis"):
@@ -3884,149 +4157,141 @@ REGLAS DE ORO:
         finally:
             self.cambiar_estado_boton(self.btn_auto_clips, "normal", "🤖 Generar Visuales (Sincronizados)")
 
-    def generar_clips_pexels(self):
-        self.mostrar_estado("Buscando clips HD en Pexels en orden de escena...", "yellow")
-        service = PexelsService(self.entrada_pexels.get().strip())
-        ori = "portrait" if self.es_vertical else "landscape"
-        es_short_extenso = self.es_vertical and len(self.keywords_actuales) >= 14
-        cantidad = (2 if es_short_extenso else 1) if self.es_vertical else (3 if self.es_extra_largo else 2)
-        urls_descargadas = set()
+    # ==========================================
+    # BÚSQUEDA DE STOCK SIN REPETIR (entre videos y sesiones)
+    # ==========================================
+    def _descargar_stock_unico(self, keyword, idx_escena, fuentes, cantidad=1, prefijo="clip",
+                               excluir_archivos=None, max_paginas=4):
+        """
+        Busca y descarga 'cantidad' clips para 'keyword' que NUNCA se hayan usado antes
+        (memoria persistente en historial_clips_usados.json). Recorre varias páginas de
+        resultados de Pexels / Pixabay hasta encontrar clips nuevos.
+        Devuelve la lista de rutas descargadas.
+        """
+        if not hasattr(self, "historial_clips"):
+            self.historial_clips = HistorialClipsUsados()
+        historial = self.historial_clips
+        excluir_archivos = set(excluir_archivos or [])
 
-        for idx_kw, kw in enumerate(self.keywords_actuales):
-            try:
-                self.mostrar_estado(
-                    f"🔎 Pexels escena {idx_kw + 1}/{len(self.keywords_actuales)}: {kw}...",
-                    "yellow",
-                )
-                videos = service.buscar_videos(kw, max(cantidad + 2, 4), ori)
-            except Exception:
-                logging.exception("Error buscando %s en Pexels", kw)
-                continue
-            descargados_escena = 0
-            for i, v in enumerate(videos):
-                if descargados_escena >= cantidad:
+        key_pexels = self.entrada_pexels.get().strip()
+        key_pixabay = self.entrada_pixabay.get().strip()
+        pexels = PexelsService(key_pexels) if key_pexels else None
+        pixabay = PixabayService(key_pixabay) if key_pixabay else None
+        ori = "portrait" if self.es_vertical else "landscape"
+        marca = int(time.time() * 1000) % 10_000_000
+
+        descargados = []
+        candidatos_repetidos = []  # por si TODO ya fue usado: último recurso
+
+        for fuente in fuentes:
+            if len(descargados) >= cantidad:
+                break
+            for pagina in range(1, max_paginas + 1):
+                if len(descargados) >= cantidad:
                     break
+                try:
+                    if fuente == "pexels" and pexels:
+                        resultados = pexels.buscar_videos(keyword, 15, ori, pagina=pagina)
+                    elif fuente == "pixabay" and pixabay:
+                        resultados = pixabay.buscar_videos(keyword, cantidad=15, pagina=pagina)
+                    else:
+                        break
+                except Exception:
+                    logging.exception("Error buscando '%s' en %s (página %s)", keyword, fuente, pagina)
+                    break
+                if not resultados:
+                    break
+
+                for obj in resultados:
+                    if len(descargados) >= cantidad:
+                        break
+                    if fuente == "pexels":
+                        url_hd = PexelsService.elegir_mejor_archivo(obj, vertical=self.es_vertical)
+                    else:
+                        url_hd = PixabayService.elegir_mejor_archivo(obj)
+                    if not url_hd:
+                        continue
+                    clave = HistorialClipsUsados.clave(fuente, obj, url_hd)
+                    if historial.ya_usado(clave):
+                        candidatos_repetidos.append((fuente, obj, url_hd, clave))
+                        continue
+                    nombre = os.path.join(
+                        self.CARPETA_ASSETS,
+                        f"{prefijo}_{idx_escena:02d}_{fuente}_{obj.get('id', marca)}_{limpiar_nombre(keyword)[:30]}.mp4",
+                    )
+                    if nombre in excluir_archivos:
+                        continue
+                    try:
+                        PexelsService.descargar(url_hd, nombre)
+                        historial.registrar(clave)
+                        descargados.append(nombre)
+                    except Exception:
+                        logging.exception("Error descargando clip de %s", fuente)
+
+        # Último recurso: si absolutamente todo ya estaba usado, toma uno repetido distinto al actual
+        if not descargados and candidatos_repetidos:
+            random.shuffle(candidatos_repetidos)
+            for fuente, obj, url_hd, clave in candidatos_repetidos:
                 nombre = os.path.join(
                     self.CARPETA_ASSETS,
-                    f"escena_{idx_kw:02d}_{limpiar_nombre(kw)}_{i}.mp4",
+                    f"{prefijo}_{idx_escena:02d}_{fuente}_{obj.get('id', marca)}_{limpiar_nombre(keyword)[:30]}.mp4",
                 )
+                if nombre in excluir_archivos:
+                    continue
                 try:
-                    url_hd = PexelsService.elegir_mejor_archivo(v, vertical=self.es_vertical)
-                    if not url_hd or url_hd in urls_descargadas:
-                        continue
-                    PexelsService.descargar(url_hd, nombre)
-                    urls_descargadas.add(url_hd)
-                    if nombre not in self.pool_videos:
-                        self.pool_videos.append(nombre)
-                    descargados_escena += 1
+                    if not os.path.exists(nombre):
+                        PexelsService.descargar(url_hd, nombre)
+                    descargados.append(nombre)
+                    break
                 except Exception:
-                    logging.exception("Error descargando clip de Pexels")
+                    logging.exception("Error en último recurso de descarga")
+        return descargados
+
+    def _cantidad_clips_por_escena(self):
+        es_short_extenso = self.es_vertical and len(self.keywords_actuales) >= 14
+        if self.es_vertical:
+            return 2 if es_short_extenso else 1
+        return 3 if self.es_extra_largo else 2
+
+    def generar_clips_pexels(self):
+        self.mostrar_estado("Buscando clips HD NUEVOS en Pexels (sin repetir videos anteriores)...", "yellow")
+        if not self.entrada_pexels.get().strip():
+            raise ValueError("Falta la API key de Pexels.")
+        cantidad = self._cantidad_clips_por_escena()
+        for idx_kw, kw in enumerate(self.keywords_actuales):
+            self.mostrar_estado(f"🔎 Pexels escena {idx_kw + 1}/{len(self.keywords_actuales)}: {kw}...", "yellow")
+            for ruta in self._descargar_stock_unico(kw, idx_kw, ["pexels"], cantidad, prefijo="escena"):
+                if ruta not in self.pool_videos:
+                    self.pool_videos.append(ruta)
         self.mostrar_estado(f"✅ {len(self.pool_videos)} Clips HD únicos de Pexels descargados.", "green")
 
     def generar_clips_pixabay(self):
-        self.mostrar_estado("Buscando clips HD en Pixabay (100% Gratis)...", "yellow")
-        service = PixabayService(self.entrada_pixabay.get().strip())
-        es_short_extenso = self.es_vertical and len(self.keywords_actuales) >= 14
-        cantidad = (2 if es_short_extenso else 1) if self.es_vertical else (3 if self.es_extra_largo else 2)
-        urls_descargadas = set()
-
+        self.mostrar_estado("Buscando clips HD NUEVOS en Pixabay (sin repetir videos anteriores)...", "yellow")
+        if not self.entrada_pixabay.get().strip():
+            raise ValueError("Falta la API key de Pixabay (es 100% gratis en pixabay.com/api/docs/).")
+        cantidad = self._cantidad_clips_por_escena()
         for idx_kw, kw in enumerate(self.keywords_actuales):
-            try:
-                self.mostrar_estado(
-                    f"🔎 Pixabay escena {idx_kw + 1}/{len(self.keywords_actuales)}: {kw}...",
-                    "yellow",
-                )
-                hits = service.buscar_videos(kw, cantidad=max(cantidad + 2, 5))
-            except Exception:
-                logging.exception("Error buscando %s en Pixabay", kw)
-                continue
-            descargados_escena = 0
-            for i, h in enumerate(hits):
-                if descargados_escena >= cantidad:
-                    break
-                nombre = os.path.join(
-                    self.CARPETA_ASSETS,
-                    f"pixabay_{idx_kw:02d}_{limpiar_nombre(kw)}_{i}.mp4",
-                )
-                try:
-                    url_hd = PixabayService.elegir_mejor_archivo(h)
-                    if not url_hd or url_hd in urls_descargadas:
-                        continue
-                    PexelsService.descargar(url_hd, nombre)
-                    urls_descargadas.add(url_hd)
-                    if nombre not in self.pool_videos:
-                        self.pool_videos.append(nombre)
-                    descargados_escena += 1
-                except Exception:
-                    logging.exception("Error descargando clip de Pixabay")
+            self.mostrar_estado(f"🔎 Pixabay escena {idx_kw + 1}/{len(self.keywords_actuales)}: {kw}...", "yellow")
+            for ruta in self._descargar_stock_unico(kw, idx_kw, ["pixabay"], cantidad, prefijo="pixabay"):
+                if ruta not in self.pool_videos:
+                    self.pool_videos.append(ruta)
         self.mostrar_estado(f"✅ {len(self.pool_videos)} Clips HD únicos de Pixabay descargados.", "green")
 
     def generar_clips_combo_gratis(self):
         """Alterna y respalda automáticamente entre Pexels y Pixabay para máxima variedad a costo $0."""
-        self.mostrar_estado("Buscando en Combo Gratis HD (Pexels + Pixabay)...", "yellow")
+        self.mostrar_estado("Buscando en Combo Gratis HD (Pexels + Pixabay, sin repetir)...", "yellow")
         key_pexels = self.entrada_pexels.get().strip()
         key_pixabay = self.entrada_pixabay.get().strip()
         if not key_pexels and not key_pixabay:
             raise ValueError("Ingresa al menos tu API Key gratuita de Pexels o de Pixabay.")
-
-        pexels = PexelsService(key_pexels) if key_pexels else None
-        pixabay = PixabayService(key_pixabay) if key_pixabay else None
-        ori = "portrait" if self.es_vertical else "landscape"
         clips_por_escena = 1 if self.es_vertical else (2 if self.es_extra_largo else 1)
-        urls_descargadas = set()
 
         for idx_kw, kw in enumerate(self.keywords_actuales):
-            descargados_escena = 0
-            usar_pixabay_primero = (idx_kw % 2 == 1) and (pixabay is not None)
-            orden_fuentes = ["pixabay", "pexels"] if usar_pixabay_primero else ["pexels", "pixabay"]
-
-            for fuente in orden_fuentes:
-                if descargados_escena >= clips_por_escena:
-                    break
-                if fuente == "pexels" and pexels:
-                    try:
-                        self.mostrar_estado(
-                            f"🔎 Combo Gratis [{idx_kw + 1}/{len(self.keywords_actuales)}] Pexels: {kw}...",
-                            "yellow",
-                        )
-                        videos = pexels.buscar_videos(kw, 4, ori)
-                        for i_v, vid in enumerate(videos):
-                            if descargados_escena >= clips_por_escena:
-                                break
-                            url_hd = PexelsService.elegir_mejor_archivo(vid, vertical=self.es_vertical)
-                            if url_hd and url_hd not in urls_descargadas:
-                                nombre = os.path.join(
-                                    self.CARPETA_ASSETS,
-                                    f"combo_{idx_kw:02d}_pexels_{i_v}_{limpiar_nombre(kw)}.mp4",
-                                )
-                                PexelsService.descargar(url_hd, nombre)
-                                urls_descargadas.add(url_hd)
-                                self.pool_videos.append(nombre)
-                                descargados_escena += 1
-                    except Exception:
-                        logging.exception("Fallback de Pexels en Combo Gratis")
-                elif fuente == "pixabay" and pixabay:
-                    try:
-                        self.mostrar_estado(
-                            f"🔎 Combo Gratis [{idx_kw + 1}/{len(self.keywords_actuales)}] Pixabay: {kw}...",
-                            "yellow",
-                        )
-                        hits = pixabay.buscar_videos(kw, cantidad=4)
-                        for i_h, hit in enumerate(hits):
-                            if descargados_escena >= clips_por_escena:
-                                break
-                            url_hd = PixabayService.elegir_mejor_archivo(hit)
-                            if url_hd and url_hd not in urls_descargadas:
-                                nombre = os.path.join(
-                                    self.CARPETA_ASSETS,
-                                    f"combo_{idx_kw:02d}_pixabay_{i_h}_{limpiar_nombre(kw)}.mp4",
-                                )
-                                PexelsService.descargar(url_hd, nombre)
-                                urls_descargadas.add(url_hd)
-                                self.pool_videos.append(nombre)
-                                descargados_escena += 1
-                    except Exception:
-                        logging.exception("Fallback de Pixabay en Combo Gratis")
+            orden_fuentes = ["pixabay", "pexels"] if (idx_kw % 2 == 1 and key_pixabay) else ["pexels", "pixabay"]
+            self.mostrar_estado(f"🔎 Combo Gratis [{idx_kw + 1}/{len(self.keywords_actuales)}]: {kw}...", "yellow")
+            for ruta in self._descargar_stock_unico(kw, idx_kw, orden_fuentes, clips_por_escena, prefijo="combo"):
+                if ruta not in self.pool_videos:
+                    self.pool_videos.append(ruta)
 
         self.mostrar_estado(f"✅ {len(self.pool_videos)} Clips Combo Gratis HD listos.", "green")
 
@@ -4224,44 +4489,20 @@ REGLAS DE ORO:
             except Exception:
                 logging.exception("Fallback en Gancho Kling 3.0")
 
-        # 2. ESCENAS RESTANTES (o Escena 0 si no había API Key de Fal): Pexels/Pixabay Gratis -> Fallback Pollinations Flux Gratis
-        pexels = PexelsService(key_pexels) if key_pexels else None
-        pixabay = PixabayService(key_pixabay) if key_pixabay else None
-        ori = "portrait" if self.es_vertical else "landscape"
-
+        # 2. ESCENAS RESTANTES (o Escena 0 si no había API Key de Fal): Pexels/Pixabay Gratis (SIN REPETIR) -> Fallback Pollinations Flux Gratis
         inicio_idx = 1 if gancho_listo else 0
         for idx in range(inicio_idx, total_escenas):
             kw = keywords[idx] if idx < len(keywords) else prompts[idx]
             prompt_esc = prompts[idx] if idx < len(prompts) else kw
             descargado = False
 
-            if pexels and (idx % 2 == 1 or not pixabay):
-                try:
-                    self.mostrar_estado(f"🔎 Híbrido Escena {idx + 1}/{total_escenas} (Pexels Gratis): {kw}...", "yellow")
-                    videos = pexels.buscar_videos(kw, 1, ori)
-                    if videos:
-                        url_hd = PexelsService.elegir_mejor_archivo(videos[0], vertical=self.es_vertical)
-                        if url_hd:
-                            nombre = os.path.join(self.CARPETA_ASSETS, f"hibrido_{idx:02d}_pexels.mp4")
-                            PexelsService.descargar(url_hd, nombre)
-                            self.pool_videos.append(nombre)
-                            descargado = True
-                except Exception:
-                    logging.exception("Fallback Pexels en modo híbrido")
-
-            if not descargado and pixabay:
-                try:
-                    self.mostrar_estado(f"🔎 Híbrido Escena {idx + 1}/{total_escenas} (Pixabay Gratis): {kw}...", "yellow")
-                    hits = pixabay.buscar_videos(kw, cantidad=3)
-                    if hits:
-                        url_hd = PixabayService.elegir_mejor_archivo(hits[0])
-                        if url_hd:
-                            nombre = os.path.join(self.CARPETA_ASSETS, f"hibrido_{idx:02d}_pixabay.mp4")
-                            PexelsService.descargar(url_hd, nombre)
-                            self.pool_videos.append(nombre)
-                            descargado = True
-                except Exception:
-                    logging.exception("Fallback Pixabay en modo híbrido")
+            if key_pexels or key_pixabay:
+                orden = ["pexels", "pixabay"] if (idx % 2 == 1 or not key_pixabay) else ["pixabay", "pexels"]
+                self.mostrar_estado(f"🔎 Híbrido Escena {idx + 1}/{total_escenas} (Stock Gratis): {kw}...", "yellow")
+                rutas = self._descargar_stock_unico(kw, idx, orden, 1, prefijo="hibrido")
+                if rutas:
+                    self.pool_videos.append(rutas[0])
+                    descargado = True
 
             if not descargado:
                 try:
@@ -4319,12 +4560,17 @@ REGLAS DE ORO:
             while tiempo_act < self.duracion_total_audio - 0.05:
                 video_elegido = self.pool_videos[idx_clip % len(self.pool_videos)]
                 narracion_asociada = ""
+                keyword_asociada = ""
 
                 if pesos_escenas and total_palabras > 0:
                     # Calculamos qué escena corresponde al progreso actual del audio
                     progreso = min(0.999, tiempo_act / max(0.1, self.duracion_total_audio))
                     idx_escena_actual = min(len(pesos_escenas) - 1, int(progreso * len(pesos_escenas)))
                     narracion_asociada = textos_escenas[idx_escena_actual]
+                    esc = self.escenas_guion[idx_escena_actual] if idx_escena_actual < len(self.escenas_guion) else {}
+                    keyword_asociada = esc.get("keyword_pexels", "") if isinstance(esc, dict) else ""
+                    if not keyword_asociada and idx_escena_actual < len(self.keywords_actuales):
+                        keyword_asociada = self.keywords_actuales[idx_escena_actual]
 
                     if len(self.pool_videos) <= len(pesos_escenas) and idx_clip < len(pesos_escenas):
                         proporcion = pesos_escenas[idx_clip] / total_palabras
@@ -4347,6 +4593,7 @@ REGLAS DE ORO:
                     "duracion": duracion_real,
                     "offset": 0.0,
                     "narracion": narracion_asociada,
+                    "keyword": keyword_asociada,
                 })
                 tiempo_act += duracion_real
                 orden += 1
@@ -4354,6 +4601,7 @@ REGLAS DE ORO:
 
             self.clip_seleccionado_idx = 0
             self.posicion_aguja = 0.0
+            self.after(0, self.cerrar_cache_clips_capcut)
             self.after(0, self.dibujar_timeline_ui)
             self.after(0, lambda: self.pestanas.set("🎞️ 3. Storyboard (Timeline)"))
             self.cambiar_estado_boton(self.btn_exp_mp4, "normal")
