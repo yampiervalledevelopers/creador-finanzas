@@ -12,7 +12,7 @@ import logging
 import shutil
 import time
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 from openai import OpenAI
 import requests
 
@@ -69,6 +69,28 @@ ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 REQUEST_TIMEOUT = 60
+
+from proglog import ProgressBarLogger
+
+
+class RenderProgressLogger(ProgressBarLogger):
+    """Monitor de progreso en tiempo real para exportación de video en MoviePy."""
+
+    def __init__(self, callback):
+        super().__init__()
+        self.callback = callback
+        self.last_pct = -1
+
+    def bars_callback(self, bar, attr, value, old_value=None):
+        if bar == "t":
+            total = self.bars[bar].get("total", 1)
+            pct = int((value / max(1, total)) * 100)
+            if pct != self.last_pct and (pct % 3 == 0 or pct == 100):
+                self.last_pct = pct
+                try:
+                    self.callback(pct)
+                except Exception:
+                    pass
 
 
 # ==========================================
@@ -2497,8 +2519,8 @@ class StudioApp(ctk.CTk):
         panel_capcut_top = ctk.CTkFrame(self.tab_timeline, fg_color="#141820", corner_radius=8)
         panel_capcut_top.pack(fill="x", padx=5, pady=(4, 3))
 
-        # Mini-Monitor en vivo a la izquierda
-        frame_monitor_capcut = ctk.CTkFrame(panel_capcut_top, fg_color="#07090D", width=200, height=150, corner_radius=6)
+        # Mini-Monitor en vivo a la izquierda (dimensiones fijas para evitar deformaciones)
+        frame_monitor_capcut = ctk.CTkFrame(panel_capcut_top, fg_color="#07090D", width=180, height=135, corner_radius=6)
         frame_monitor_capcut.pack(side="left", padx=6, pady=6)
         frame_monitor_capcut.pack_propagate(False)
 
@@ -2621,6 +2643,7 @@ class StudioApp(ctk.CTk):
             font=ctk.CTkFont(size=11, weight="bold"),
             text_color="#FFD54F",
             anchor="w",
+            wraplength=250,
         )
         self.lbl_clip_activo_capcut.pack(side="left", padx=6, pady=2)
 
@@ -2662,13 +2685,15 @@ class StudioApp(ctk.CTk):
             fila_trim, text="Duración:", font=ctk.CTkFont(size=10), text_color="#B0BEC5"
         ).pack(side="right", padx=(4, 2))
 
-        # Fila 4: Narración / Subtítulo en el punto de la aguja
+        # Fila 4: Narración / Subtítulo en el punto de la aguja (con wraplength fijo para que no deforme la ventana)
         self.lbl_sub_capcut = ctk.CTkLabel(
             frame_inspector,
-            text="💡 Clic = seleccionar | Doble clic en un clip = 🔎 reemplazarlo automáticamente según su subtítulo | Clic derecho = más opciones",
+            text="💡 Clic = Mover aguja / Seleccionar clip | Doble clic = Reemplazar clip según subtítulo | Clic derecho = Opciones",
             font=ctk.CTkFont(size=11),
             text_color="#CFD8DC",
             anchor="w",
+            wraplength=500,
+            height=28,
         )
         self.lbl_sub_capcut.pack(fill="x", padx=4, pady=(2, 0))
 
@@ -3099,16 +3124,11 @@ class StudioApp(ctk.CTk):
                     fill=color_fondo, outline=color_borde, width=grosor_borde,
                 )
 
-                # Miniatura(s) tipo filmstrip dentro del bloque
+                # 1 Miniatura limpia por bloque de clip para máxima fluidez gráfica
                 thumb = self._obtener_thumb_capcut(item["archivo"], item.get("offset", 0.0))
                 if thumb and (x2 - x1) > 34:
                     self.refs_thumbs_canvas.append(thumb)
-                    x_thumb = int(x1 + 5)
-                    while x_thumb + 64 < x2 - 8:
-                        c.create_image(x_thumb, 52, image=thumb, anchor="nw")
-                        x_thumb += 68
-                    if x_thumb == int(x1 + 5):
-                        c.create_image(int(x1 + 4), 52, image=thumb, anchor="nw")
+                    c.create_image(int(x1 + 4), 52, image=thumb, anchor="nw")
 
                 # Banda superior del bloque con # de clip, nombre y duración
                 c.create_rectangle(x1 + 2, 32, x2 - 2, 50, fill="#0D1B2A", outline="")
@@ -3157,7 +3177,7 @@ class StudioApp(ctk.CTk):
                 x0, 153, x_fin_voz, 195,
                 fill="#004D40", outline="#00E676", width=1,
             )
-            # Dibujar barras de onda de sonido (waveform)
+            # Dibujar barras de onda de sonido (waveform optimizado)
             x_onda = x0 + 6
             semilla = 1
             while x_onda < x_fin_voz - 4:
@@ -3167,7 +3187,7 @@ class StudioApp(ctk.CTk):
                     x_onda, 174 - altura_barra, x_onda, 174 + altura_barra,
                     fill="#00E676", width=2,
                 )
-                x_onda += 5
+                x_onda += 8
             txt_bgm = f" + 🎵 {os.path.basename(self.ruta_musica_fondo)}" if self.ruta_musica_fondo else ""
             c.create_rectangle(x0 + 4, 155, min(x_fin_voz - 2, x0 + 290), 170, fill="#00251A", outline="")
             c.create_text(
@@ -3199,24 +3219,28 @@ class StudioApp(ctk.CTk):
         if not hasattr(self, "canvas_timeline"):
             return
         c = self.canvas_timeline
-        c.delete("aguja")
         x_aguja = self.X_ENCABEZADO_TIMELINE + self.posicion_aguja * self.zoom_px_seg
-        # Cabezal pentagonal rojo estilo CapCut en la regla
-        c.create_polygon(
+        coords_cabeza = [
             x_aguja - 7, 1,
             x_aguja + 7, 1,
             x_aguja + 7, 12,
             x_aguja, 21,
             x_aguja - 7, 12,
-            fill="#FF1744", outline="#FFFFFF", width=1, tags="aguja",
-        )
-        # Línea vertical roja que atraviesa todas las pistas
-        c.create_line(x_aguja, 20, x_aguja, 200, fill="#FF1744", width=2, tags="aguja")
+        ]
+        coords_linea = [x_aguja, 20, x_aguja, 200]
+        if c.find_withtag("cabeza_aguja"):
+            c.coords("cabeza_aguja", *coords_cabeza)
+            c.coords("linea_aguja", *coords_linea)
+            c.tag_raise("aguja")
+        else:
+            c.create_polygon(*coords_cabeza, fill="#FF1744", outline="#FFFFFF", width=1, tags=("aguja", "cabeza_aguja"))
+            c.create_line(*coords_linea, fill="#FF1744", width=2, tags=("aguja", "linea_aguja"))
 
         total = max(self.duracion_total_timeline, float(self.duracion_total_audio or 0.0))
-        self.lbl_tiempo_capcut.configure(
-            text=f"⏱️ {self._formatear_seg_capcut(self.posicion_aguja)} / {self._formatear_seg_capcut(total)}"
-        )
+        if hasattr(self, "lbl_tiempo_capcut"):
+            self.lbl_tiempo_capcut.configure(
+                text=f"⏱️ {self._formatear_seg_capcut(self.posicion_aguja)} / {self._formatear_seg_capcut(total)}"
+            )
 
     def _formatear_seg_capcut(self, seg):
         seg = max(0.0, float(seg))
@@ -3226,7 +3250,8 @@ class StudioApp(ctk.CTk):
 
     def _actualizar_inspector_capcut(self):
         if not self.timeline_data:
-            self.lbl_clip_activo_capcut.configure(text="🎯 Clip: Ninguno en la línea de tiempo")
+            if hasattr(self, "lbl_clip_activo_capcut"):
+                self.lbl_clip_activo_capcut.configure(text="🎯 Clip: Ninguno en la línea de tiempo")
             return
         self.clip_seleccionado_idx = max(0, min(self.clip_seleccionado_idx, len(self.timeline_data) - 1))
         item = self.timeline_data[self.clip_seleccionado_idx]
@@ -3235,10 +3260,20 @@ class StudioApp(ctk.CTk):
             nombre = nombre[:20] + ".."
         off = float(item.get("offset", 0.0))
         kw = (item.get("keyword") or "").strip()
-        txt_kw = f" | 🔎 \"{kw[:22]}\"" if kw else ""
-        self.lbl_clip_activo_capcut.configure(
-            text=f"🎯 Clip #{item['orden']}: {nombre} | {item['inicio']:.1f}s-{item['fin']:.1f}s (Dur: {item['duracion']:.1f}s | Inicio: +{off:.1f}s){txt_kw}"
-        )
+        txt_kw = f" | 🔎 \"{kw[:20]}\"" if kw else ""
+        if hasattr(self, "lbl_clip_activo_capcut"):
+            self.lbl_clip_activo_capcut.configure(
+                text=f"🎯 Clip #{item['orden']}: {nombre} | {item['inicio']:.1f}s-{item['fin']:.1f}s (Dur: {item['duracion']:.1f}s | Inicio: +{off:.1f}s){txt_kw}"
+            )
+
+    def _programar_frame_capcut(self, t):
+        """Debouncing/Throttling de visualización de frames en el monitor para no saturar la CPU durante arrastre."""
+        if getattr(self, "_id_after_frame", None) is not None:
+            try:
+                self.after_cancel(self._id_after_frame)
+            except Exception:
+                pass
+        self._id_after_frame = self.after(35, lambda: self._mostrar_frame_capcut(t))
 
     # ---------- Interacción con Mouse en el Lienzo Horizontal ----------
     def _al_clic_canvas_timeline(self, evento):
@@ -3257,22 +3292,41 @@ class StudioApp(ctk.CTk):
         dur_max = max(self.duracion_total_timeline, float(self.duracion_total_audio or 0.0), 0.1)
         self.posicion_aguja = min(dur_max, tiempo_clic)
 
-        # Verificar si hizo clic en algún bloque o en su asa derecha de recorte (pista de video y=28..108)
         self.arrastrando_borde_idx = None
+        self.arrastrando_aguja = False
+
+        # Si el clic es en la regla superior (y <= 26): SIEMPRE arrastrar aguja roja
+        if y_canvas <= 26:
+            self.arrastrando_aguja = True
+            self._actualizar_aguja_canvas()
+            self._mostrar_frame_capcut(self.posicion_aguja)
+            return
+
+        # Si el clic es en la pista de video o subs (y > 26):
+        clip_tocado = None
         for idx, item in enumerate(self.timeline_data):
             x1 = x0 + item["inicio"] * self.zoom_px_seg
             x2 = x0 + item["fin"] * self.zoom_px_seg
-            if 28 <= y_canvas <= 108 and abs(x_canvas - x2) <= 8:
-                self.clip_seleccionado_idx = idx
-                self.arrastrando_borde_idx = idx
-                self.dibujar_timeline_ui()
-                return
             if x1 <= x_canvas <= x2:
-                self.clip_seleccionado_idx = idx
+                clip_tocado = idx
+                # Solo si el clip YA estaba seleccionado y se hace clic en su borde derecho extremo (Trim handle)
+                if idx == self.clip_seleccionado_idx and 28 <= y_canvas <= 108 and (x2 - 8) <= x_canvas <= (x2 + 2):
+                    self.arrastrando_borde_idx = idx
+                    return
                 break
 
+        if clip_tocado is not None:
+            cambio_sel = (self.clip_seleccionado_idx != clip_tocado)
+            self.clip_seleccionado_idx = clip_tocado
+            self._actualizar_inspector_capcut()
+            if cambio_sel:
+                # Redibujar para actualizar el marco amarillo del clip seleccionado
+                self.dibujar_timeline_ui()
+                return
+
         self.arrastrando_aguja = True
-        self.dibujar_timeline_ui()
+        self._actualizar_aguja_canvas()
+        self._mostrar_frame_capcut(self.posicion_aguja)
 
     def _al_arrastrar_canvas_timeline(self, evento):
         if not hasattr(self, "canvas_timeline"):
@@ -3281,28 +3335,47 @@ class StudioApp(ctk.CTk):
         x0 = self.X_ENCABEZADO_TIMELINE
         tiempo_mouse = max(0.0, (x_canvas - x0) / self.zoom_px_seg)
 
-        # Si está arrastrando el borde derecho de un clip -> Recorte interactivo (Trim)
+        # 1. Si está recortando el borde derecho de un clip (Trim interactivo)
         if self.arrastrando_borde_idx is not None and 0 <= self.arrastrando_borde_idx < len(self.timeline_data):
             item = self.timeline_data[self.arrastrando_borde_idx]
             nueva_dur = round(max(0.6, tiempo_mouse - item["inicio"]), 2)
-            item["duracion"] = nueva_dur
-            self.posicion_aguja = item["inicio"] + nueva_dur
-            self.dibujar_timeline_ui()
+            if abs(item["duracion"] - nueva_dur) >= 0.05:
+                item["duracion"] = nueva_dur
+                self.posicion_aguja = item["inicio"] + nueva_dur
+                self.recalcular_tiempos_timeline()
+                self._actualizar_inspector_capcut()
+                self._actualizar_aguja_canvas()
             return
 
-        # Si está arrastrando la aguja roja -> Scrubbing en tiempo real
+        # 2. Si está arrastrando la aguja roja (Scrubbing ultra-fluido a 60 FPS)
         if self.arrastrando_aguja:
             dur_max = max(self.duracion_total_timeline, float(self.duracion_total_audio or 0.0), 0.1)
             self.posicion_aguja = min(dur_max, max(0.0, tiempo_mouse))
             self._actualizar_aguja_canvas()
-            self._mostrar_frame_capcut(self.posicion_aguja)
+
+            # Autoscroll si el mouse llega a los bordes laterales del lienzo visible
+            ancho_vis = self.canvas_timeline.winfo_width()
+            if ancho_vis > 50:
+                if evento.x > ancho_vis - 25:
+                    self.canvas_timeline.xview_scroll(1, "units")
+                elif evento.x < 25 and evento.x > 0:
+                    self.canvas_timeline.xview_scroll(-1, "units")
+
+            # Actualizar monitor con debouncing para mantener 0 lag en el hilo principal
+            self._programar_frame_capcut(self.posicion_aguja)
 
     def _al_soltar_canvas_timeline(self, _evento):
         if self.arrastrando_borde_idx is not None:
+            self.recalcular_tiempos_timeline()
+            self.dibujar_timeline_ui()
             self.mostrar_estado(
                 f"↔️ Duración del Clip #{self.arrastrando_borde_idx + 1} ajustada a {self.timeline_data[self.arrastrando_borde_idx]['duracion']:.1f}s.",
                 "#00E5FF",
             )
+        elif self.arrastrando_aguja:
+            # Mostrar inmediatamente el frame final exacto en el monitor
+            self._mostrar_frame_capcut(self.posicion_aguja)
+
         self.arrastrando_borde_idx = None
         self.arrastrando_aguja = False
 
@@ -3748,36 +3821,34 @@ class StudioApp(ctk.CTk):
         return len(self.timeline_data) - 1, ultimo, max(0.0, ultimo["duracion"] - 0.05)
 
     def _mostrar_frame_capcut(self, t):
-        if not self.timeline_data:
+        if not self.timeline_data or not hasattr(self, "lbl_monitor_capcut"):
             return
         try:
             idx, seg, t_local = self._segmento_capcut_en(t)
             clip = self._obtener_clip_capcut(seg["archivo"])
+            if not clip:
+                return
             t_clip = float(seg.get("offset", 0.0)) + t_local
-            if clip.duration and clip.duration > 0.1:
-                t_clip = t_clip % max(0.05, clip.duration - 0.08)
+            dur = getattr(clip, "duration", None)
+            if dur and dur > 0.1:
+                t_clip = t_clip % max(0.05, dur - 0.08)
             frame = clip.get_frame(max(0.0, t_clip))
             img = PIL.Image.fromarray(frame)
 
-            ancho_m, alto_m = (82, 144) if self.es_vertical else (190, 108)
-            ratio_obj = ancho_m / alto_m
-            w, h = img.size
-            if (w / h) > ratio_obj:
-                nw = int(h * ratio_obj)
-                x1 = (w - nw) // 2
-                img = img.crop((x1, 0, x1 + nw, h))
-            else:
-                nh = int(w / ratio_obj)
-                y1 = (h - nh) // 2
-                img = img.crop((0, y1, w, y1 + nh))
-            img = img.resize((ancho_m, alto_m), PIL.Image.Resampling.BILINEAR)
+            # Ajustar manteniendo relación de aspecto sin sobrepasar el contenedor de 180x135
+            ancho_m, alto_m = (72, 126) if self.es_vertical else (160, 90)
+            img.thumbnail((ancho_m, alto_m), PIL.Image.Resampling.BILINEAR)
 
-            self.foto_monitor_capcut = ctk.CTkImage(light_image=img, dark_image=img, size=(ancho_m, alto_m))
+            self.foto_monitor_capcut = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
             self.lbl_monitor_capcut.configure(image=self.foto_monitor_capcut, text="")
-            narr = seg.get("narracion", "")
-            self.lbl_sub_capcut.configure(
-                text=f"🗣️ Clip #{idx + 1}: \"{narr[:115]}\"" if narr else f"🎬 Viendo Clip #{idx + 1}: {os.path.basename(seg['archivo'])}"
-            )
+            narr = (seg.get("narracion") or "").strip()
+            if hasattr(self, "lbl_sub_capcut"):
+                if narr:
+                    if len(narr) > 95:
+                        narr = narr[:92] + "..."
+                    self.lbl_sub_capcut.configure(text=f"🗣️ Clip #{idx + 1}: \"{narr}\"")
+                else:
+                    self.lbl_sub_capcut.configure(text=f"🎬 Viendo Clip #{idx + 1}: {os.path.basename(seg['archivo'])}")
         except Exception:
             logging.exception("Error mostrando frame en monitor CapCut")
 
@@ -4611,6 +4682,36 @@ REGLAS DE ORO:
             self.mostrar_estado(f"❌ Error Timeline: {e}", "red")
 
     # ==========================================
+    # VALIDACIÓN Y CONTROL DE INTEGRIDAD DE VIDEO
+    # ==========================================
+    @staticmethod
+    def validar_archivo_video(ruta):
+        """Verifica que el archivo de video exista, tenga tamaño >15KB y pueda decodificarse sin moov atom corrupto."""
+        if not ruta or not os.path.exists(ruta):
+            return False, "El archivo de video no existe en el disco."
+        tam = os.path.getsize(ruta)
+        if tam < 15000:
+            return False, f"El archivo está incompleto o pesa muy poco ({tam} bytes)."
+        clip = None
+        try:
+            from moviepy.editor import VideoFileClip
+            clip = VideoFileClip(ruta)
+            dur = getattr(clip, "duration", 0)
+            if not dur or dur < 0.5:
+                return False, f"El video tiene una duración inválida ({dur}s)."
+            _ = clip.get_frame(0.0)
+            _ = clip.get_frame(max(0.0, dur - 0.15))
+            return True, f"Válido ({dur:.1f}s, {tam / (1024 * 1024):.1f} MB)"
+        except Exception as e:
+            return False, f"El archivo está corrupto o falta el moov atom: {e}"
+        finally:
+            if clip:
+                try:
+                    clip.close()
+                except Exception:
+                    pass
+
+    # ==========================================
     # PASO 4: EXPORTAR MP4
     # ==========================================
     def ejecutar_exportar_mp4(self):
@@ -4619,7 +4720,7 @@ REGLAS DE ORO:
             return
 
         self.pausar_capcut()
-        self.mostrar_estado("Renderizando MP4 Final...", "yellow")
+        self.mostrar_estado("🎬 Iniciando renderizado de MP4...", "yellow")
         self.cambiar_estado_boton(self.btn_exp_mp4, "disabled")
 
         renderer = VideoRenderer(self.formato_actual)
@@ -4627,6 +4728,14 @@ REGLAS DE ORO:
         audio_clip = None
         bgm_clip = None
         video_final = None
+        ruta_salida = f"FINAL_{self.formato_actual}.mp4"
+        ruta_temp = f"_render_temp_FINAL_{self.formato_actual}.mp4"
+
+        def _progreso_render(pct):
+            self.after(0, lambda: self.mostrar_estado(f"⏳ Renderizando video final: {pct}%...", "#FFD600"))
+
+        logger_render = RenderProgressLogger(_progreso_render)
+
         try:
             clips_finales = [
                 renderer.procesar_recorte_clip(i["archivo"], i["duracion"], offset=i.get("offset", 0.0))
@@ -4648,17 +4757,51 @@ REGLAS DE ORO:
                 if clips_de_texto:
                     video_final = CompositeVideoClip([video_final] + clips_de_texto)
 
-            ruta_salida = f"FINAL_{self.formato_actual}.mp4"
-            video_final.write_videofile(
-                ruta_salida, fps=24, codec="libx264", audio_codec="aac", logger=None
-            )
-            self.mostrar_estado("🎉 ¡MP4 FINAL CON SUBTÍTULOS Y AUDIO LISTO!", "#00FF00")
+            if os.path.exists(ruta_temp):
+                try:
+                    os.remove(ruta_temp)
+                except Exception:
+                    pass
 
+            self.mostrar_estado("⏳ Exportando video (H.264 + AAC, faststart optimizado para YouTube)...", "yellow")
+            video_final.write_videofile(
+                ruta_temp,
+                fps=24,
+                codec="libx264",
+                audio_codec="aac",
+                preset="fast",
+                threads=4,
+                ffmpeg_params=[
+                    "-pix_fmt", "yuv420p",
+                    "-movflags", "+faststart",
+                ],
+                logger=logger_render,
+            )
+
+            # Validar integridad del archivo temporal antes de reemplazar el definitivo
+            valido, msg_val = self.validar_archivo_video(ruta_temp)
+            if not valido:
+                raise Exception(f"La verificación de integridad del video renderizado falló: {msg_val}")
+
+            # Reemplazo atómico seguro del archivo final
+            if os.path.exists(ruta_salida):
+                try:
+                    os.remove(ruta_salida)
+                except Exception:
+                    pass
+            os.replace(ruta_temp, ruta_salida)
+
+            self.mostrar_estado("🎉 ¡MP4 FINAL LISTO Y VERIFICADO PARA YOUTUBE!", "#00FF00")
             self.cargar_video_proyecto()
             self.after(0, lambda: self.pestanas.set("🚀 4. Publicador"))
         except Exception as e:
             logging.exception("Error exportando MP4")
-            self.mostrar_estado(f"❌ Error: {e}", "red")
+            self.mostrar_estado(f"❌ Error al exportar: {e}", "red")
+            if os.path.exists(ruta_temp):
+                try:
+                    os.remove(ruta_temp)
+                except Exception:
+                    pass
         finally:
             for clip in clips_finales:
                 try:
@@ -4720,22 +4863,36 @@ REGLAS DE ORO:
     def cargar_video_proyecto(self):
         self.ruta_video_publicar = f"FINAL_{self.formato_actual}.mp4"
         if os.path.exists(self.ruta_video_publicar):
-            self.after(0, lambda: self.lbl_video_pub.configure(
-                text=f"✅ Seleccionado: {self.ruta_video_publicar}", text_color="#00FF00"))
-            self.after(0, lambda: self.entrada_titulo_pub.delete(0, "end"))
-            self.after(0, lambda: self.entrada_titulo_pub.insert(0, self.entrada_titulo.get()))
-            self.after(0, lambda: self.caja_desc_pub.delete("0.0", "end"))
-            self.after(0, lambda: self.caja_desc_pub.insert("0.0", self.caja_desc.get("0.0", "end").strip()))
+            valido, msg = self.validar_archivo_video(self.ruta_video_publicar)
+            if valido:
+                tam_mb = os.path.getsize(self.ruta_video_publicar) / (1024 * 1024)
+                self.after(0, lambda: self.lbl_video_pub.configure(
+                    text=f"✅ Seleccionado: {self.ruta_video_publicar} ({tam_mb:.1f} MB - Íntegro)", text_color="#00FF00"))
+                self.after(0, lambda: self.entrada_titulo_pub.delete(0, "end"))
+                self.after(0, lambda: self.entrada_titulo_pub.insert(0, self.entrada_titulo.get()))
+                self.after(0, lambda: self.caja_desc_pub.delete("0.0", "end"))
+                self.after(0, lambda: self.caja_desc_pub.insert("0.0", self.caja_desc.get("0.0", "end").strip()))
+                self.after(0, lambda: self.cambiar_estado_boton(self.btn_publicar_yt, "normal"))
+            else:
+                self.after(0, lambda: self.lbl_video_pub.configure(
+                    text=f"⚠️ Video con problemas ({msg}). Vuelve al Paso 3 y pulsa 'Exportar MP4 Final'.", text_color="#FFA000"))
         else:
             self.after(0, lambda: self.lbl_video_pub.configure(
                 text="❌ Aún no has renderizado el video final.", text_color="red"))
 
     def cargar_video_externo(self):
-        archivo = filedialog.askopenfilename(filetypes=[("Videos", "*.mp4 *.mov *.avi")])
+        archivo = filedialog.askopenfilename(filetypes=[("Videos", "*.mp4 *.mov *.avi *.mkv")])
         if archivo:
             self.ruta_video_publicar = archivo
-            self.after(0, lambda: self.lbl_video_pub.configure(
-                text=f"✅ Seleccionado: {os.path.basename(archivo)}", text_color="#00FF00"))
+            valido, msg = self.validar_archivo_video(archivo)
+            tam_mb = os.path.getsize(archivo) / (1024 * 1024)
+            if valido:
+                self.after(0, lambda: self.lbl_video_pub.configure(
+                    text=f"✅ Seleccionado: {os.path.basename(archivo)} ({tam_mb:.1f} MB)", text_color="#00FF00"))
+                self.after(0, lambda: self.cambiar_estado_boton(self.btn_publicar_yt, "normal"))
+            else:
+                self.after(0, lambda: self.lbl_video_pub.configure(
+                    text=f"⚠️ {os.path.basename(archivo)}: {msg}", text_color="#FFA000"))
             self.after(0, lambda: self.entrada_titulo_pub.delete(0, "end"))
             self.after(0, lambda: self.caja_desc_pub.delete("0.0", "end"))
 
@@ -4743,13 +4900,19 @@ REGLAS DE ORO:
         self.mostrar_estado("Conectando con YouTube... ¡Revisa tu navegador web!", "orange")
         self.cambiar_estado_boton(self.btn_publicar_yt, "disabled")
         try:
-            titulo = self.entrada_titulo_pub.get()
+            titulo = self.entrada_titulo_pub.get().strip()
             desc = self.caja_desc_pub.get("0.0", "end").strip()
 
             if not self.ruta_video_publicar or not os.path.exists(self.ruta_video_publicar):
-                raise Exception("El video seleccionado no existe.")
+                raise Exception("El video seleccionado no existe en disco.")
+
+            # Validación de integridad antes de iniciar cualquier conexión con YouTube
+            valido, msg_val = self.validar_archivo_video(self.ruta_video_publicar)
+            if not valido:
+                raise Exception(f"El video está incompleto o corrupto ({msg_val}). Por favor renderízalo de nuevo en el Paso 3.")
+
             if not os.path.exists("client_secret.json"):
-                raise Exception("Falta el archivo 'client_secret.json'.")
+                raise Exception("Falta el archivo 'client_secret.json' de Google Cloud.")
 
             scopes = ["https://www.googleapis.com/auth/youtube.upload"]
             creds = None
@@ -4778,16 +4941,35 @@ REGLAS DE ORO:
                 "snippet": {"title": titulo, "description": desc, "categoryId": cat_id},
                 "status": {"privacyStatus": estado_priv, "selfDeclaredMadeForKids": es_infantil},
             }
-            self.mostrar_estado("Subiendo video a YouTube... ¡Paciencia, no cierres la app!", "yellow")
+            self.mostrar_estado("🚀 Iniciando subida segura a YouTube...", "yellow")
 
-            media = MediaFileUpload(self.ruta_video_publicar, chunksize=-1, resumable=True)
+            # Subida en fragmentos (chunks de 2 MB) con reanudación y porcentaje en tiempo real
+            chunk_size = 2 * 1024 * 1024
+            media = MediaFileUpload(
+                self.ruta_video_publicar,
+                mimetype="video/mp4",
+                chunksize=chunk_size,
+                resumable=True,
+            )
             request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
-            response = request.execute()
 
-            self.mostrar_estado(f"🎉 ¡ÉXITO! Video Publicado. ID: {response['id']}", "#00FF00")
+            response = None
+            while response is None:
+                status, response = request.next_chunk()
+                if status:
+                    pct = int(status.progress() * 100)
+                    self.mostrar_estado(f"📤 Subiendo video a YouTube: {pct}% completado...", "#00E5FF")
+
+            video_id = response.get("id", "Desconocido")
+            self.mostrar_estado(f"🎉 ¡ÉXITO! Video Publicado correctamente. ID: {video_id}", "#00FF00")
+            messagebox.showinfo(
+                "Video Publicado",
+                f"¡Tu video fue subido exitosamente a YouTube!\n\nID del Video: {video_id}\nEstado: {self.menu_privacidad.get()}\n\nYouTube comenzará a procesarlo en HD sin errores.",
+            )
         except Exception as e:
             logging.exception("Error al Publicar")
             self.mostrar_estado(f"❌ Error al Publicar: {e}", "red")
+            messagebox.showerror("Error al Publicar", f"No se pudo completar la subida:\n\n{e}")
         finally:
             self.cambiar_estado_boton(self.btn_publicar_yt, "normal")
 
