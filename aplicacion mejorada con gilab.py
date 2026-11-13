@@ -40,6 +40,8 @@ import PIL.Image
 import PIL.ImageDraw
 import PIL.ImageFont
 import PIL.ImageTk
+import PIL.ImageEnhance
+import PIL.ImageFilter
 if not hasattr(PIL.Image, "ANTIALIAS"):
     PIL.Image.ANTIALIAS = PIL.Image.Resampling.LANCZOS
 
@@ -865,8 +867,9 @@ class PollinationsService:
     """
 
     @staticmethod
-    def generar_imagen_flux(prompt, ruta_salida, vertical=True, api_key=None):
-        ancho, alto = (1080, 1920) if vertical else (1920, 1080)
+    def generar_imagen_flux(prompt, ruta_salida, vertical=True, api_key=None, ancho=None, alto=None):
+        if ancho is None or alto is None:
+            ancho, alto = (1080, 1920) if vertical else (1920, 1080)
         seed = random.randint(1, 999999)
         prompt_url = requests.utils.quote(prompt)
         url = (
@@ -1519,6 +1522,530 @@ class VideoRenderer:
             return audio_voz, None
 
 
+class ThumbnailStudioService:
+    """
+    Estudio Generador de Miniaturas Irresistibles (Alto CTR Viral):
+    1. Psicología CTR con IA: crea 3 ganchos visuales (curiosity gap) de 2-4 palabras sin repetir el título.
+    2. Multimotor de fondos: FLUX.1 Gratis, Fal.ai, OpenAI, Mejor Fotograma del Video o Imagen de PC.
+    3. Motor tipográfico Pillow Pro: color grading, degradados de contraste, bordes gruesos, sellos de urgencia
+       y peso garantizado < 2 MB para la API de YouTube (1280x720 en largos y 1080x1920 en Shorts).
+    """
+
+    ESTILOS_VIRALES = {
+        "🔥 Alerta Roja / Crisis": {
+            "color_l1": "#FFFFFF",
+            "color_l2": "#FF1744",
+            "badge_bg": "#D50000",
+            "badge_fg": "#FFFFFF",
+            "contraste": 1.22,
+            "saturacion": 1.18,
+            "nitidez": 1.25,
+            "borde_marco": "#FF1744",
+        },
+        "💰 Secreto Oro / Wall Street": {
+            "color_l1": "#FFFFFF",
+            "color_l2": "#FFD600",
+            "badge_bg": "#E65100",
+            "badge_fg": "#FFFFFF",
+            "contraste": 1.20,
+            "saturacion": 1.20,
+            "nitidez": 1.25,
+            "borde_marco": None,
+        },
+        "🕵️ Documental Netflix / Épico": {
+            "color_l1": "#F5F5F5",
+            "color_l2": "#00E5FF",
+            "badge_bg": "#B71C1C",
+            "badge_fg": "#FFFFFF",
+            "contraste": 1.24,
+            "saturacion": 1.08,
+            "nitidez": 1.30,
+            "borde_marco": None,
+        },
+        "⚡ Impacto Extremo (MrBeast)": {
+            "color_l1": "#FFEA00",
+            "color_l2": "#00E676",
+            "badge_bg": "#6200EA",
+            "badge_fg": "#FFFFFF",
+            "contraste": 1.28,
+            "saturacion": 1.35,
+            "nitidez": 1.35,
+            "borde_marco": "#FFEA00",
+        },
+    }
+
+    POSICIONES_TEXTO = [
+        "Abajo (Recomendado)",
+        "Centro",
+        "Arriba",
+        "Izquierda (Sujeto a la derecha)",
+    ]
+
+    MOTORES_FONDO = [
+        "🆓 FLUX.1 Gratis (Pollinations - $0.00)",
+        "⚡ Fal.ai Flux Schnell (~$0.003)",
+        "🎨 OpenAI (GPT-Image-1 / DALL-E 3)",
+        "🎞️ Mejor Fotograma del Video Actual",
+        "📂 Imagen desde mi PC",
+    ]
+
+    @staticmethod
+    def _wrap_badge_texto(texto, max_chars=24):
+        txt = (texto or "").strip().upper()
+        return txt[:max_chars]
+
+    @classmethod
+    def idear_conceptos_miniatura_ia(
+        cls,
+        api_key_openai,
+        modelo="gpt-4o-mini",
+        tema="",
+        titulo="",
+        guion="",
+        genero_nombre="",
+        estilo_visual_genero="",
+    ):
+        """
+        Genera 3 conceptos psicológicos de miniatura de Alto CTR usando OpenAI.
+        Si no hay API key, devuelve 3 conceptos heurísticos listos para editar.
+        """
+        tema_ref = (titulo or tema or "Finanzas y Economía").strip()
+        if not api_key_openai:
+            return [
+                {
+                    "enfoque": "🔥 Alerta / Peligro",
+                    "texto_l1": "¿EL GRAN",
+                    "texto_l2": "ERROR?",
+                    "badge": "URGENTE",
+                    "estilo_sugerido": "🔥 Alerta Roja / Crisis",
+                    "prompt_fondo": (
+                        f"Dramatic cinematic photography representing {tema_ref}, glowing red warning lights, "
+                        f"dark moody background, high contrast rim lighting, 8k photorealistic, leave dark empty space at the bottom, no text, no watermark"
+                    ),
+                },
+                {
+                    "enfoque": "💰 Secreto Revelado",
+                    "texto_l1": "LO QUE NO",
+                    "texto_l2": "TE DICEN",
+                    "badge": "EXCLUSIVO",
+                    "estilo_sugerido": "💰 Secreto Oro / Wall Street",
+                    "prompt_fondo": (
+                        f"Luxury dark Wall Street thriller scene about {tema_ref}, dramatic golden rim light, "
+                        f"deep shadows, shallow depth of field, 35mm cinema look, empty dark foreground for text, no text, no watermark"
+                    ),
+                },
+                {
+                    "enfoque": "🕵️ Caso Real / Impacto",
+                    "texto_l1": "ASÍ CAMBIÓ",
+                    "texto_l2": "TODO",
+                    "badge": "CASO REAL",
+                    "estilo_sugerido": "🕵️ Documental Netflix / Épico",
+                    "prompt_fondo": (
+                        f"Netflix documentary epic visual scene about {tema_ref}, dramatic cyan and amber lighting, "
+                        f"ultra sharp subject on the right side, dark clean left shadow area, no text, no letters, no watermark"
+                    ),
+                },
+            ]
+
+        client = OpenAI(api_key=api_key_openai)
+        extracto_guion = (guion or "")[:1800]
+        prompt = f"""Eres el director creativo #1 de YouTube especializado en MINIATURAS DE ALTO CTR (+14% CTR) estilo MagnatesMedia, Veritasium y canales virales en español.
+
+DATOS DEL VIDEO:
+- Nicho/Género: {genero_nombre}
+- Tema: {tema}
+- Título del video: {titulo}
+- Extracto del guion: {extracto_guion}
+- Estética del canal: {estilo_visual_genero}
+
+REGLAS ESTRICTAS DE PSICOLOGÍA CTR:
+1. BRECHA DE CURIOSIDAD (Curiosity Gap): El texto de la miniatura JAMÁS repite el título palabra por palabra; debe complementarlo creando intriga, urgencia o choque.
+2. MÁXIMO 2 A 4 PALABRAS EN TOTAL:
+   - 'texto_l1': 1 o 2 palabras cortas en ESPAÑOL (máx 14 caracteres, ej: "¿COMPRAR DÓLAR?", "EL SECRETO", "NO HAGAS ESTO").
+   - 'texto_l2': 1 o 2 palabras explosivas en ESPAÑOL (máx 14 caracteres, ej: "¡GRAN ERROR!", "TODO CAMBIÓ", "SIN SALIDA").
+   - 'badge': etiqueta corta de 1-2 palabras en MAYÚSCULAS (ej: "URGENTE", "FILTRADO", "CASO REAL", "EN CRISIS").
+3. COMPOSICIÓN VISUAL DEL FONDO ('prompt_fondo' EN INGLÉS):
+   - Describe una escena visual hiperrealista, con un único foco de atención potente (un rostro expresivo, billetes ardiendo, bóveda abierta, gráfico desplomándose, personaje misterioso, etc.), iluminación dramática (rim lighting, alto contraste).
+   - PROHIBIDO pedir texto, letras, palabras o logotipos en la imagen (siempre incluye "no text, no letters, no watermark, clean dark negative space for title overlay").
+4. 'estilo_sugerido': elige exactamente uno de estos 4 nombres literales:
+   - "🔥 Alerta Roja / Crisis"
+   - "💰 Secreto Oro / Wall Street"
+   - "🕵️ Documental Netflix / Épico"
+   - "⚡ Impacto Extremo (MrBeast)"
+
+Genera exactamente 3 conceptos distintos en JSON con la llave 'conceptos':
+1) Enfoque Aversión a la pérdida / Alerta
+2) Enfoque Secreto / Curiosidad pura
+3) Enfoque Dato extremo / Choque visual
+
+Formato JSON estricto:
+{{"conceptos": [{{"enfoque": "...", "texto_l1": "...", "texto_l2": "...", "badge": "...", "estilo_sugerido": "...", "prompt_fondo": "..."}}]}}"""
+
+        res = client.chat.completions.create(
+            model=modelo or "gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Eres un experto mundial en CTR y diseño de miniaturas virales de YouTube. Respondes siempre en JSON válido.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+        )
+        datos = json.loads(res.choices[0].message.content)
+        conceptos = datos.get("conceptos", [])
+        if not conceptos:
+            raise ValueError("La IA no devolvió conceptos de miniatura.")
+        return conceptos[:3]
+
+    @staticmethod
+    def extraer_mejor_fotograma(rutas_candidatas, ruta_salida_png):
+        """
+        Analiza varios instantes de los videos disponibles y extrae el fotograma
+        más nítido, luminoso y con mayor riqueza visual (evita frames negros).
+        """
+        mejor_frame = None
+        mejor_score = -1.0
+
+        for ruta in rutas_candidatas:
+            if not ruta or not os.path.exists(ruta):
+                continue
+            clip = None
+            try:
+                clip = VideoFileClip(ruta)
+                dur = float(getattr(clip, "duration", 0) or 0)
+                if dur <= 0.2:
+                    continue
+                for frac in (0.15, 0.30, 0.50, 0.70, 0.85):
+                    t = min(max(0.05, dur * frac), max(0.05, dur - 0.1))
+                    frame = clip.get_frame(t)
+                    # Evaluar contraste (std) y evitar frames demasiado oscuros (mean < 20)
+                    brillo = float(np.mean(frame))
+                    contraste = float(np.std(frame))
+                    score = contraste * (1.0 if brillo > 28 else 0.35)
+                    if score > mejor_score:
+                        mejor_score = score
+                        mejor_frame = frame
+                if mejor_frame is not None:
+                    break
+            except Exception:
+                continue
+            finally:
+                if clip:
+                    try:
+                        clip.close()
+                    except Exception:
+                        pass
+
+        if mejor_frame is None:
+            raise ValueError("No se encontró ningún video válido para extraer un fotograma.")
+
+        img = PIL.Image.fromarray(mejor_frame).convert("RGB")
+        img.save(ruta_salida_png, format="PNG")
+        return ruta_salida_png
+
+    @classmethod
+    def generar_fondo_miniatura(
+        cls,
+        motor_nombre,
+        prompt_fondo,
+        ruta_salida_png,
+        vertical=False,
+        api_key_openai="",
+        api_key_fal="",
+        rutas_video_fallback=None,
+        ruta_pc="",
+    ):
+        """Genera o prepara la imagen base (sin texto) según el motor elegido."""
+        ancho, alto = (1080, 1920) if vertical else (1280, 720)
+        prompt_limpio = (prompt_fondo or "").strip()
+        if not prompt_limpio:
+            prompt_limpio = (
+                "Cinematic hyperrealistic documentary thumbnail background, dramatic lighting, "
+                "high contrast, clean dark negative space, no text, no letters, no watermark"
+            )
+        if "no text" not in prompt_limpio.lower():
+            prompt_limpio += ", no text, no letters, no watermark"
+
+        if "Imagen desde mi PC" in motor_nombre:
+            if not ruta_pc or not os.path.exists(ruta_pc):
+                raise ValueError("Primero selecciona una imagen desde tu PC.")
+            shutil.copy(ruta_pc, ruta_salida_png)
+            return ruta_salida_png
+
+        if "Mejor Fotograma" in motor_nombre:
+            return cls.extraer_mejor_fotograma(rutas_video_fallback or [], ruta_salida_png)
+
+        if "Fal.ai" in motor_nombre:
+            fal_srv = FalVideoService(api_key_fal)
+            return fal_srv.generar_imagen_flux_schnell(prompt_limpio, ruta_salida_png, vertical=vertical)
+
+        if "OpenAI" in motor_nombre:
+            oa_srv = OpenAIService(api_key_openai)
+            return oa_srv.generar_imagen(prompt_limpio, ruta_salida_png, vertical=vertical)
+
+        # Por defecto: FLUX.1 Gratis (Pollinations)
+        return PollinationsService.generar_imagen_flux(
+            prompt_limpio,
+            ruta_salida_png,
+            vertical=vertical,
+            ancho=ancho,
+            alto=alto,
+        )
+
+    @staticmethod
+    def _ajustar_fuente_al_ancho(draw, texto, ancho_max, tam_inicial, tam_min=36):
+        tam = int(tam_inicial)
+        while tam >= tam_min:
+            fuente = VideoRenderer.cargar_fuente(tam)
+            if draw.textlength(texto, font=fuente) <= ancho_max:
+                return fuente, tam
+            tam -= 4
+        return VideoRenderer.cargar_fuente(tam_min), tam_min
+
+    @classmethod
+    def componer_miniatura_pro(
+        cls,
+        ruta_fondo,
+        texto_l1,
+        texto_l2,
+        badge="",
+        estilo_nombre="🔥 Alerta Roja / Crisis",
+        posicion="Abajo (Recomendado)",
+        vertical=False,
+        ruta_salida_jpg="MINIATURA_FINAL.jpg",
+    ):
+        """
+        Compone la miniatura profesional con color grading, viñeta de contraste,
+        sello de urgencia y tipografía bicolor de alto impacto, garantizando peso < 2 MB.
+        """
+        if not ruta_fondo or not os.path.exists(ruta_fondo):
+            raise ValueError("No existe imagen base de fondo para componer la miniatura.")
+
+        estilo = cls.ESTILOS_VIRALES.get(estilo_nombre, cls.ESTILOS_VIRALES["🔥 Alerta Roja / Crisis"])
+        ancho_obj, alto_obj = (1080, 1920) if vertical else (1280, 720)
+
+        # 1. Cargar y reencuadrar en formato exacto (Cover + Center Crop)
+        img = PIL.Image.open(ruta_fondo).convert("RGB")
+        w, h = img.size
+        ratio_img = w / max(1, h)
+        ratio_obj = ancho_obj / alto_obj
+        if ratio_img > ratio_obj:
+            nuevo_h = alto_obj
+            nuevo_w = int(w * (alto_obj / h))
+        else:
+            nuevo_w = ancho_obj
+            nuevo_h = int(h * (ancho_obj / w))
+        img = img.resize((nuevo_w, nuevo_h), PIL.Image.Resampling.LANCZOS)
+        x_crop = max(0, (nuevo_w - ancho_obj) // 2)
+        y_crop = max(0, (nuevo_h - alto_obj) // 2)
+        img = img.crop((x_crop, y_crop, x_crop + ancho_obj, y_crop + alto_obj))
+
+        # 2. Color Grading de alto CTR (Contraste + Saturación + Nitidez)
+        img = PIL.ImageEnhance.Contrast(img).enhance(estilo["contraste"])
+        img = PIL.ImageEnhance.Color(img).enhance(estilo["saturacion"])
+        img = PIL.ImageEnhance.Sharpness(img).enhance(estilo["nitidez"])
+
+        base_rgba = img.convert("RGBA")
+
+        # 3. Degradado direccional de contraste según posición del texto
+        overlay = PIL.Image.new("RGBA", (ancho_obj, alto_obj), (0, 0, 0, 0))
+        ov_draw = PIL.ImageDraw.Draw(overlay)
+
+        if "Arriba" in posicion:
+            alto_grad = int(alto_obj * 0.50)
+            for y in range(alto_grad):
+                alpha = int(215 * ((1.0 - y / max(1, alto_grad)) ** 1.35))
+                ov_draw.line([(0, y), (ancho_obj, y)], fill=(5, 7, 12, alpha))
+        elif "Izquierda" in posicion:
+            ancho_grad = int(ancho_obj * 0.65)
+            for x in range(ancho_grad):
+                alpha = int(225 * ((1.0 - x / max(1, ancho_grad)) ** 1.25))
+                ov_draw.line([(x, 0), (x, alto_obj)], fill=(5, 7, 12, alpha))
+        elif "Centro" in posicion:
+            ov_draw.rectangle([(0, 0), (ancho_obj, alto_obj)], fill=(0, 0, 0, 95))
+            y_ini = int(alto_obj * 0.28)
+            y_fin = int(alto_obj * 0.72)
+            for y in range(y_ini, y_fin):
+                dist = abs(y - (alto_obj / 2)) / max(1.0, (y_fin - y_ini) / 2)
+                alpha = int(145 * max(0.0, 1.0 - dist))
+                ov_draw.line([(0, y), (ancho_obj, y)], fill=(4, 6, 10, alpha))
+        else:
+            # Abajo (Recomendado)
+            y_inicio_grad = int(alto_obj * (0.42 if not vertical else 0.48))
+            total_grad = alto_obj - y_inicio_grad
+            for y in range(y_inicio_grad, alto_obj):
+                prog = (y - y_inicio_grad) / max(1, total_grad)
+                alpha = int(225 * (prog ** 1.25))
+                ov_draw.line([(0, y), (ancho_obj, y)], fill=(5, 7, 12, alpha))
+
+        base_rgba = PIL.Image.alpha_composite(base_rgba, overlay)
+        draw = PIL.ImageDraw.Draw(base_rgba)
+
+        # 4. Marco sutil de impacto si el estilo lo usa
+        if estilo.get("borde_marco"):
+            grosor_marco = 10 if not vertical else 12
+            draw.rectangle(
+                [0, 0, ancho_obj - 1, alto_obj - 1],
+                outline=estilo["borde_marco"],
+                width=grosor_marco,
+            )
+
+        # 5. Cálculo de tipografía, badge y ubicación exacta
+        l1 = (texto_l1 or "").strip().upper()
+        l2 = (texto_l2 or "").strip().upper()
+        txt_badge = cls._wrap_badge_texto(badge)
+
+        alinear_izq = "Izquierda" in posicion
+        margen_x = int(ancho_obj * 0.06)
+        ancho_max_txt = int(ancho_obj * (0.56 if alinear_izq else 0.88))
+
+        tam_max_l1 = 126 if not vertical else 155
+        tam_max_l2 = 148 if not vertical else 178
+
+        fuente_l1, tam_l1 = cls._ajustar_fuente_al_ancho(draw, l1 or " ", ancho_max_txt, tam_max_l1, 38)
+        fuente_l2, tam_l2 = cls._ajustar_fuente_al_ancho(draw, l2 or " ", ancho_max_txt, tam_max_l2, 42)
+        tam_badge = 34 if not vertical else 40
+        fuente_badge = VideoRenderer.cargar_fuente(tam_badge)
+
+        # Medir alturas reales de cada bloque
+        alt_badge = (tam_badge + 26) if txt_badge else 0
+        gap_badge = 18 if txt_badge else 0
+        alt_l1 = int(tam_l1 * 1.10) if l1 else 0
+        gap_l1 = 10 if (l1 and l2) else 0
+        alt_l2 = int(tam_l2 * 1.12) if l2 else 0
+        alto_bloque = alt_badge + gap_badge + alt_l1 + gap_l1 + alt_l2
+
+        if "Arriba" in posicion:
+            y_cursor = int(alto_obj * (0.08 if not vertical else 0.12))
+        elif "Centro" in posicion or alinear_izq:
+            y_cursor = int((alto_obj - alto_bloque) / 2)
+        else:
+            # En Shorts (9:16), dejar margen abajo para no chocar con UI/título de YouTube/TikTok
+            margen_inf = int(alto_obj * (0.08 if not vertical else 0.19))
+            y_cursor = max(int(alto_obj * 0.15), alto_obj - margen_inf - alto_bloque)
+
+        # Dibujar Badge / Sello superior
+        if txt_badge:
+            w_badge = int(draw.textlength(txt_badge, font=fuente_badge)) + 38
+            h_badge = tam_badge + 22
+            x_badge = margen_x if alinear_izq else int((ancho_obj - w_badge) / 2)
+            # Sombra del badge
+            draw.rounded_rectangle(
+                [x_badge + 5, y_cursor + 5, x_badge + w_badge + 5, y_cursor + h_badge + 5],
+                radius=12,
+                fill=(0, 0, 0, 190),
+            )
+            draw.rounded_rectangle(
+                [x_badge, y_cursor, x_badge + w_badge, y_cursor + h_badge],
+                radius=12,
+                fill=estilo["badge_bg"],
+                outline="#FFFFFF",
+                width=3,
+            )
+            draw.text(
+                (x_badge + 19, y_cursor + 8),
+                txt_badge,
+                font=fuente_badge,
+                fill=estilo["badge_fg"],
+            )
+            y_cursor += h_badge + gap_badge
+
+        def _dibujar_linea(texto, fuente, tam, color_hex, y_pos):
+            if not texto:
+                return y_pos
+            w_txt = draw.textlength(texto, font=fuente)
+            x_pos = margen_x if alinear_izq else int((ancho_obj - w_txt) / 2)
+            stroke = max(6, int(tam * 0.085))
+            off_sombra = max(6, int(tam * 0.065))
+            # Sombra profunda negra
+            draw.text(
+                (x_pos + off_sombra, y_pos + off_sombra),
+                texto,
+                font=fuente,
+                fill=(0, 0, 0, 230),
+                stroke_width=stroke,
+                stroke_fill=(0, 0, 0, 230),
+            )
+            # Texto con borde negro nítido
+            draw.text(
+                (x_pos, y_pos),
+                texto,
+                font=fuente,
+                fill=color_hex,
+                stroke_width=stroke,
+                stroke_fill="#000000",
+            )
+            return y_pos + int(tam * 1.12)
+
+        if l1:
+            y_cursor = _dibujar_linea(l1, fuente_l1, tam_l1, estilo["color_l1"], y_cursor) + (gap_l1 if l2 else 0)
+        if l2:
+            _dibujar_linea(l2, fuente_l2, tam_l2, estilo["color_l2"], y_cursor)
+
+        # 6. Guardar como JPG garantizando límite < 1.9 MB para YouTube
+        img_final = base_rgba.convert("RGB")
+        calidad = 93
+        while calidad >= 72:
+            img_final.save(ruta_salida_jpg, format="JPEG", quality=calidad, optimize=True)
+            if os.path.getsize(ruta_salida_jpg) <= 1_900_000:
+                break
+            calidad -= 5
+
+        return ruta_salida_jpg
+
+    @staticmethod
+    def inyectar_portada_en_video(ruta_video_in, ruta_miniatura_jpg, ruta_video_out, duracion_portada=0.14):
+        """
+        Superpone la miniatura en los primeros 0.14s del video conservando el audio intacto
+        desde t=0, permitiendo usar cualquier frame inicial como portada oficial en Shorts/Reels/TikTok.
+        """
+        clip = None
+        portada = None
+        compuesto = None
+        try:
+            clip = VideoFileClip(ruta_video_in)
+            img_pil = PIL.Image.open(ruta_miniatura_jpg).convert("RGB").resize(
+                (clip.w, clip.h), PIL.Image.Resampling.LANCZOS
+            )
+            portada = (
+                ImageClip(np.array(img_pil))
+                .set_duration(min(duracion_portada, max(0.05, (clip.duration or 1.0) * 0.2)))
+                .set_start(0)
+            )
+            compuesto = CompositeVideoClip([clip, portada]).set_duration(clip.duration)
+            if clip.audio is not None:
+                compuesto = compuesto.set_audio(clip.audio)
+
+            compuesto.write_videofile(
+                ruta_video_out,
+                fps=24,
+                codec="libx264",
+                audio_codec="aac",
+                preset="fast",
+                threads=4,
+                ffmpeg_params=["-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+                logger=None,
+            )
+            return ruta_video_out
+        finally:
+            if portada:
+                try:
+                    portada.close()
+                except Exception:
+                    pass
+            if compuesto:
+                try:
+                    compuesto.close()
+                except Exception:
+                    pass
+            if clip:
+                try:
+                    clip.close()
+                except Exception:
+                    pass
+
+
 # ==========================================
 # APLICACIÓN PRINCIPAL
 # ==========================================
@@ -2014,6 +2541,13 @@ class StudioApp(ctk.CTk):
         self.foto_monitor_capcut = None
         self.arrastrando_borde_idx = None
         self.arrastrando_aguja = False
+
+        # Estado del Estudio de Miniaturas (Pestaña 4)
+        self.conceptos_miniatura = []
+        self.ruta_fondo_miniatura = ""
+        self.ruta_fondo_pc_miniatura = ""
+        self.ruta_miniatura_final = ""
+        self.foto_preview_miniatura = None
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=2)
@@ -2747,44 +3281,245 @@ class StudioApp(ctk.CTk):
         )
         self.btn_exp_capcut.pack(side="right", expand=True, padx=4)
 
-        # --- PESTAÑA 4 ---
+        # --- PESTAÑA 4: PUBLICADOR + ESTUDIO DE MINIATURAS IRRESISTIBLES (ALTO CTR) ---
+        scroll_pub = ctk.CTkScrollableFrame(self.tab_publicar, fg_color="transparent")
+        scroll_pub.pack(fill="both", expand=True, padx=2, pady=2)
+
+        # Sección A: Video y Metadatos
+        panel_video_pub = ctk.CTkFrame(scroll_pub, fg_color="#141820", corner_radius=8)
+        panel_video_pub.pack(fill="x", padx=6, pady=(4, 8))
+
         self.lbl_video_pub = ctk.CTkLabel(
-            self.tab_publicar, text="Ningún video seleccionado.",
+            panel_video_pub, text="Ningún video seleccionado.",
             text_color="yellow", font=ctk.CTkFont(weight="bold"),
         )
-        self.lbl_video_pub.pack(pady=(10, 5))
+        self.lbl_video_pub.pack(pady=(8, 4))
 
-        frame_btn_pub = ctk.CTkFrame(self.tab_publicar, fg_color="transparent")
-        frame_btn_pub.pack(fill="x", padx=5, pady=5)
+        frame_btn_pub = ctk.CTkFrame(panel_video_pub, fg_color="transparent")
+        frame_btn_pub.pack(fill="x", padx=8, pady=4)
         ctk.CTkButton(
             frame_btn_pub, text="🎬 Usar Video del Proyecto",
-            command=self.cargar_video_proyecto, fg_color="#2196F3",
-        ).pack(side="left", expand=True, padx=2)
+            command=self.cargar_video_proyecto, fg_color="#2196F3", height=30,
+        ).pack(side="left", expand=True, padx=3)
         ctk.CTkButton(
             frame_btn_pub, text="📂 Cargar Video Externo (PC)",
-            command=self.cargar_video_externo, fg_color="#FF9800",
-        ).pack(side="right", expand=True, padx=2)
+            command=self.cargar_video_externo, fg_color="#FF9800", height=30,
+        ).pack(side="right", expand=True, padx=3)
 
-        ctk.CTkLabel(self.tab_publicar, text="Título del Video:").pack(anchor="w", padx=10, pady=(15, 0))
-        self.entrada_titulo_pub = ctk.CTkEntry(self.tab_publicar, font=ctk.CTkFont(size=14))
-        self.entrada_titulo_pub.pack(fill="x", padx=10, pady=5)
+        frame_meta_pub = ctk.CTkFrame(panel_video_pub, fg_color="transparent")
+        frame_meta_pub.pack(fill="x", padx=8, pady=4)
+        frame_meta_pub.grid_columnconfigure(0, weight=3)
+        frame_meta_pub.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(self.tab_publicar, text="Descripción y Hashtags:").pack(anchor="w", padx=10, pady=(5, 0))
-        self.caja_desc_pub = ctk.CTkTextbox(self.tab_publicar, height=100, wrap="word", font=ctk.CTkFont(size=13))
-        self.caja_desc_pub.pack(fill="x", padx=10, pady=5)
+        ctk.CTkLabel(frame_meta_pub, text="Título del Video:").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        ctk.CTkLabel(frame_meta_pub, text="Privacidad:").grid(row=0, column=1, sticky="w")
 
-        ctk.CTkLabel(self.tab_publicar, text="Privacidad:").pack(anchor="w", padx=10, pady=(5, 0))
+        self.entrada_titulo_pub = ctk.CTkEntry(frame_meta_pub, font=ctk.CTkFont(size=13))
+        self.entrada_titulo_pub.grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(2, 6))
+
         self.menu_privacidad = ctk.CTkOptionMenu(
-            self.tab_publicar, values=["Privado", "Oculto", "Público"], fg_color="#004D40"
+            frame_meta_pub, values=["Privado", "Oculto", "Público"], fg_color="#004D40"
         )
-        self.menu_privacidad.pack(fill="x", padx=10, pady=5)
+        self.menu_privacidad.grid(row=1, column=1, sticky="ew", pady=(2, 6))
+
+        ctk.CTkLabel(panel_video_pub, text="Descripción y Hashtags:").pack(anchor="w", padx=10, pady=(2, 0))
+        self.caja_desc_pub = ctk.CTkTextbox(panel_video_pub, height=70, wrap="word", font=ctk.CTkFont(size=12))
+        self.caja_desc_pub.pack(fill="x", padx=10, pady=(2, 10))
+
+        # Sección B: Estudio de Miniaturas Irresistibles (Alto CTR)
+        panel_thumb = ctk.CTkFrame(scroll_pub, fg_color="#141820", corner_radius=8, border_width=1, border_color="#6A1B9A")
+        panel_thumb.pack(fill="x", padx=6, pady=(0, 8))
+
+        cab_thumb = ctk.CTkFrame(panel_thumb, fg_color="#1D122B", corner_radius=6)
+        cab_thumb.pack(fill="x", padx=6, pady=(6, 4))
+
+        ctk.CTkLabel(
+            cab_thumb,
+            text="🎨 ESTUDIO DE MINIATURAS IRRESISTIBLES (ALTO CTR)",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#FFD54F",
+        ).pack(side="left", padx=8, pady=6)
+
+        self.menu_thumb_formato = ctk.CTkOptionMenu(
+            cab_thumb,
+            values=["16:9 YouTube (1280x720)", "9:16 Short/Reel (1080x1920)"],
+            width=210,
+            fg_color="#4A148C",
+            command=lambda _v: self.actualizar_texto_miniatura_instantaneo(silencioso=True),
+        )
+        self.menu_thumb_formato.pack(side="right", padx=6, pady=4)
+
+        # Fila 1: Generador de Conceptos Psicológicos IA
+        fila_ideas = ctk.CTkFrame(panel_thumb, fg_color="transparent")
+        fila_ideas.pack(fill="x", padx=8, pady=4)
+
+        self.btn_idear_thumb = ctk.CTkButton(
+            fila_ideas,
+            text="🧠 1. Idear 3 Conceptos Irresistibles con IA",
+            command=self.hilo_idear_conceptos_miniatura,
+            fg_color="#8E24AA",
+            hover_color="#6A1B9A",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            height=30,
+        )
+        self.btn_idear_thumb.pack(side="left", padx=(0, 8))
+
+        self.seg_conceptos_thumb = ctk.CTkSegmentedButton(
+            fila_ideas,
+            values=["Concepto 1", "Concepto 2", "Concepto 3"],
+            command=self.aplicar_concepto_miniatura,
+            selected_color="#E65100",
+            selected_hover_color="#BF360C",
+        )
+        self.seg_conceptos_thumb.set("Concepto 1")
+        self.seg_conceptos_thumb.pack(side="left", fill="x", expand=True)
+
+        # Cuerpo de 2 Columnas: Controles (Izquierda) + Preview en Vivo (Derecha)
+        cuerpo_thumb = ctk.CTkFrame(panel_thumb, fg_color="transparent")
+        cuerpo_thumb.pack(fill="x", padx=8, pady=4)
+        cuerpo_thumb.grid_columnconfigure(0, weight=3)
+        cuerpo_thumb.grid_columnconfigure(1, weight=2)
+
+        col_ctrl = ctk.CTkFrame(cuerpo_thumb, fg_color="#1A202C", corner_radius=6)
+        col_ctrl.grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=2)
+
+        # Textos de impacto
+        fila_txt_1 = ctk.CTkFrame(col_ctrl, fg_color="transparent")
+        fila_txt_1.pack(fill="x", padx=8, pady=(6, 2))
+        fila_txt_1.grid_columnconfigure(0, weight=1)
+        fila_txt_1.grid_columnconfigure(1, weight=1)
+        fila_txt_1.grid_columnconfigure(2, weight=1)
+
+        ctk.CTkLabel(fila_txt_1, text="Línea 1 (Blanco):", font=ctk.CTkFont(size=11)).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(fila_txt_1, text="Línea 2 (Impacto):", font=ctk.CTkFont(size=11)).grid(row=0, column=1, sticky="w", padx=4)
+        ctk.CTkLabel(fila_txt_1, text="Sello / Badge:", font=ctk.CTkFont(size=11)).grid(row=0, column=2, sticky="w")
+
+        self.entrada_thumb_l1 = ctk.CTkEntry(fila_txt_1, placeholder_text="Ej: ¿COMPRAR DÓLAR?", height=28)
+        self.entrada_thumb_l1.grid(row=1, column=0, sticky="ew", padx=(0, 4))
+        self.entrada_thumb_l2 = ctk.CTkEntry(fila_txt_1, placeholder_text="Ej: ¡GRAN ERROR!", height=28)
+        self.entrada_thumb_l2.grid(row=1, column=1, sticky="ew", padx=4)
+        self.entrada_thumb_badge = ctk.CTkEntry(fila_txt_1, placeholder_text="Ej: URGENTE", height=28)
+        self.entrada_thumb_badge.grid(row=1, column=2, sticky="ew", padx=(4, 0))
+
+        # Selectores de Estilo, Posición y Motor
+        fila_sel_1 = ctk.CTkFrame(col_ctrl, fg_color="transparent")
+        fila_sel_1.pack(fill="x", padx=8, pady=4)
+        fila_sel_1.grid_columnconfigure(0, weight=1)
+        fila_sel_1.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(fila_sel_1, text="Plantilla Visual:", font=ctk.CTkFont(size=11)).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(fila_sel_1, text="Posición del Texto:", font=ctk.CTkFont(size=11)).grid(row=0, column=1, sticky="w", padx=(6, 0))
+
+        self.menu_thumb_estilo = ctk.CTkOptionMenu(
+            fila_sel_1,
+            values=list(ThumbnailStudioService.ESTILOS_VIRALES.keys()),
+            fg_color="#37474F",
+            height=26,
+            command=lambda _v: self.actualizar_texto_miniatura_instantaneo(silencioso=True),
+        )
+        self.menu_thumb_estilo.grid(row=1, column=0, sticky="ew", padx=(0, 4))
+
+        self.menu_thumb_pos = ctk.CTkOptionMenu(
+            fila_sel_1,
+            values=ThumbnailStudioService.POSICIONES_TEXTO,
+            fg_color="#37474F",
+            height=26,
+            command=lambda _v: self.actualizar_texto_miniatura_instantaneo(silencioso=True),
+        )
+        self.menu_thumb_pos.grid(row=1, column=1, sticky="ew", padx=(4, 0))
+
+        ctk.CTkLabel(col_ctrl, text="Motor de Fondo Visual:", font=ctk.CTkFont(size=11)).pack(anchor="w", padx=8, pady=(2, 0))
+        self.menu_thumb_motor = ctk.CTkOptionMenu(
+            col_ctrl,
+            values=ThumbnailStudioService.MOTORES_FONDO,
+            fg_color="#4527A0",
+            height=26,
+        )
+        self.menu_thumb_motor.pack(fill="x", padx=8, pady=(2, 4))
+
+        ctk.CTkLabel(col_ctrl, text="Prompt de Fondo (en inglés, sin texto):", font=ctk.CTkFont(size=11)).pack(anchor="w", padx=8)
+        self.caja_thumb_prompt = ctk.CTkTextbox(col_ctrl, height=52, wrap="word", font=ctk.CTkFont(size=11))
+        self.caja_thumb_prompt.pack(fill="x", padx=8, pady=(2, 6))
+
+        fila_acc_thumb = ctk.CTkFrame(col_ctrl, fg_color="transparent")
+        fila_acc_thumb.pack(fill="x", padx=8, pady=(0, 8))
+
+        self.btn_generar_thumb = ctk.CTkButton(
+            fila_acc_thumb,
+            text="🎨 2. Crear Miniatura",
+            command=self.hilo_generar_miniatura,
+            fg_color="#E65100",
+            hover_color="#BF360C",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            height=30,
+        )
+        self.btn_generar_thumb.pack(side="left", expand=True, fill="x", padx=(0, 3))
+
+        self.btn_actualizar_thumb = ctk.CTkButton(
+            fila_acc_thumb,
+            text="🔄 Actualizar Texto",
+            command=self.actualizar_texto_miniatura_instantaneo,
+            fg_color="#00838F",
+            height=30,
+        )
+        self.btn_actualizar_thumb.pack(side="left", expand=True, fill="x", padx=3)
+
+        ctk.CTkButton(
+            fila_acc_thumb,
+            text="📂 Fondo PC",
+            command=self.cargar_fondo_pc_miniatura,
+            fg_color="#546E7A",
+            width=92,
+            height=30,
+        ).pack(side="left", padx=3)
+
+        ctk.CTkButton(
+            fila_acc_thumb,
+            text="💾 Guardar",
+            command=self.guardar_copia_miniatura,
+            fg_color="#2E7D32",
+            width=82,
+            height=30,
+        ).pack(side="left", padx=(3, 0))
+
+        # Columna Derecha: Previsualizador en vivo + Switch de Portada para Shorts
+        col_prev = ctk.CTkFrame(cuerpo_thumb, fg_color="#0D1117", corner_radius=6)
+        col_prev.grid(row=0, column=1, sticky="nsew", pady=2)
+
+        frame_img_prev = ctk.CTkFrame(col_prev, fg_color="#07090D", width=330, height=205, corner_radius=6)
+        frame_img_prev.pack(padx=8, pady=(8, 4))
+        frame_img_prev.pack_propagate(False)
+
+        self.lbl_preview_thumb = ctk.CTkLabel(
+            frame_img_prev,
+            text="🖼️ Previsualizador de Miniatura\n\n1. Pulsa 'Idear 3 Conceptos'\n2. Pulsa 'Crear Miniatura'",
+            text_color="#90A4AE",
+            font=ctk.CTkFont(size=12),
+        )
+        self.lbl_preview_thumb.pack(expand=True, fill="both")
+
+        self.lbl_info_thumb = ctk.CTkLabel(
+            col_prev,
+            text="Sin miniatura generada aún.",
+            text_color="#B0BEC5",
+            font=ctk.CTkFont(size=11),
+        )
+        self.lbl_info_thumb.pack(padx=8, pady=(2, 4))
+
+        self.switch_portada_short = ctk.CTkSwitch(
+            col_prev,
+            text="📌 Incrustar como portada inicial (0.14s) en Shorts/Reels",
+            progress_color="#FF9800",
+            font=ctk.CTkFont(size=11, weight="bold"),
+        )
+        self.switch_portada_short.pack(anchor="w", padx=10, pady=(4, 8))
 
         self.btn_publicar_yt = ctk.CTkButton(
-            self.tab_publicar, text="🚀 PUBLICAR EN YOUTUBE",
-            command=self.hilo_publicar_youtube, fg_color="#D32F2F", height=40,
+            scroll_pub, text="🚀 PUBLICAR VIDEO + MINIATURA EN YOUTUBE",
+            command=self.hilo_publicar_youtube, fg_color="#D32F2F", hover_color="#B71C1C", height=42,
             font=ctk.CTkFont(weight="bold", size=15),
         )
-        self.btn_publicar_yt.pack(fill="x", padx=10, pady=15)
+        self.btn_publicar_yt.pack(fill="x", padx=8, pady=(6, 12))
 
         # --- PESTAÑA 5: CLIPPING Y RE-EDICIÓN VIRAL ---
         ctk.CTkLabel(
@@ -3933,6 +4668,12 @@ class StudioApp(ctk.CTk):
     def hilo_publicar_youtube(self):
         self.ejecutar_en_hilo(self.ejecutar_publicar_youtube)
 
+    def hilo_idear_conceptos_miniatura(self):
+        self.ejecutar_en_hilo(self.ejecutar_idear_conceptos_miniatura)
+
+    def hilo_generar_miniatura(self):
+        self.ejecutar_en_hilo(self.ejecutar_generar_miniatura)
+
     def hilo_descargar_viral_url(self):
         self.ejecutar_en_hilo(self.ejecutar_descargar_viral_url)
 
@@ -4858,10 +5599,204 @@ REGLAS DE ORO:
             self.cambiar_estado_boton(self.btn_exp_capcut, "normal")
 
     # ==========================================
+    # ESTUDIO DE MINIATURAS IRRESISTIBLES (CTR)
+    # ==========================================
+    def _es_miniatura_vertical(self):
+        return hasattr(self, "menu_thumb_formato") and "9:16" in self.menu_thumb_formato.get()
+
+    def ejecutar_idear_conceptos_miniatura(self):
+        self.cambiar_estado_boton(self.btn_idear_thumb, "disabled", "🧠 Pensando...")
+        try:
+            tema = self.entrada_tema.get().strip()
+            titulo = self.entrada_titulo_pub.get().strip() or self.entrada_titulo.get().strip()
+            guion = self.caja_guion.get("0.0", "end").strip()
+            api_openai = self.entrada_openai.get().strip()
+            modelo = self.menu_motor_ia.get().split()[0]
+
+            self.mostrar_estado("🧠 Ideando 3 conceptos psicológicos de Alto CTR para tu miniatura...", "orange")
+            conceptos = ThumbnailStudioService.idear_conceptos_miniatura_ia(
+                api_key_openai=api_openai,
+                modelo=modelo,
+                tema=tema,
+                titulo=titulo,
+                guion=guion,
+                genero_nombre=self.menu_genero.get(),
+                estilo_visual_genero=self.estilo_visual_genero_actual,
+            )
+            self.conceptos_miniatura = conceptos
+            self.after(0, lambda: self.seg_conceptos_thumb.set("Concepto 1"))
+            self.after(0, lambda: self.aplicar_concepto_miniatura("Concepto 1"))
+            self.mostrar_estado(
+                "✨ ¡3 Conceptos irresistibles listos! Elige Concepto 1, 2 o 3 y pulsa 'Crear Miniatura'.",
+                "#00FF00",
+            )
+        except Exception as e:
+            logging.exception("Error ideando conceptos de miniatura")
+            self.mostrar_estado(f"❌ Error ideando miniatura: {e}", "red")
+        finally:
+            self.cambiar_estado_boton(self.btn_idear_thumb, "normal", "🧠 1. Idear 3 Conceptos Irresistibles con IA")
+
+    def aplicar_concepto_miniatura(self, seleccion):
+        if not self.conceptos_miniatura:
+            return
+        idx_map = {"Concepto 1": 0, "Concepto 2": 1, "Concepto 3": 2}
+        idx = idx_map.get(seleccion, 0)
+        if idx >= len(self.conceptos_miniatura):
+            idx = 0
+        c = self.conceptos_miniatura[idx]
+
+        self.entrada_thumb_l1.delete(0, "end")
+        self.entrada_thumb_l1.insert(0, c.get("texto_l1", ""))
+        self.entrada_thumb_l2.delete(0, "end")
+        self.entrada_thumb_l2.insert(0, c.get("texto_l2", ""))
+        self.entrada_thumb_badge.delete(0, "end")
+        self.entrada_thumb_badge.insert(0, c.get("badge", ""))
+        self.caja_thumb_prompt.delete("0.0", "end")
+        self.caja_thumb_prompt.insert("0.0", c.get("prompt_fondo", ""))
+
+        estilo_sug = c.get("estilo_sugerido", "")
+        if estilo_sug in ThumbnailStudioService.ESTILOS_VIRALES:
+            self.menu_thumb_estilo.set(estilo_sug)
+
+        enfoque = c.get("enfoque", seleccion)
+        self.mostrar_estado(f"🎯 Aplicado {seleccion} ({enfoque}).", "#00E5FF")
+        if self.ruta_fondo_miniatura and os.path.exists(self.ruta_fondo_miniatura):
+            self.actualizar_texto_miniatura_instantaneo(silencioso=True)
+
+    def cargar_fondo_pc_miniatura(self):
+        archivo = filedialog.askopenfilename(
+            title="Selecciona una imagen de fondo para la miniatura",
+            filetypes=[("Imágenes", "*.png *.jpg *.jpeg *.webp")],
+        )
+        if not archivo:
+            return
+        self.ruta_fondo_pc_miniatura = archivo
+        self.ruta_fondo_miniatura = archivo
+        self.menu_thumb_motor.set("📂 Imagen desde mi PC")
+        self.actualizar_texto_miniatura_instantaneo()
+
+    def ejecutar_generar_miniatura(self):
+        self.cambiar_estado_boton(self.btn_generar_thumb, "disabled", "🎨 Generando...")
+        try:
+            motor = self.menu_thumb_motor.get()
+            prompt_fondo = self.caja_thumb_prompt.get("0.0", "end").strip()
+            vertical = self._es_miniatura_vertical()
+
+            os.makedirs(self.CARPETA_ASSETS, exist_ok=True)
+            ruta_fondo_png = os.path.join(self.CARPETA_ASSETS, "thumb_fondo_base.png")
+            ruta_final_jpg = os.path.join(self.CARPETA_ASSETS, "MINIATURA_FINAL.jpg")
+
+            # Lista ordenada de videos candidatos por si elige "Mejor Fotograma"
+            rutas_vid = [self.ruta_video_publicar] if self.ruta_video_publicar else []
+            rutas_vid.extend([i.get("archivo") for i in self.timeline_data if i.get("archivo")])
+            rutas_vid.extend(self.pool_videos)
+
+            self.mostrar_estado(f"🎨 Generando fondo visual con {motor}...", "yellow")
+            ThumbnailStudioService.generar_fondo_miniatura(
+                motor_nombre=motor,
+                prompt_fondo=prompt_fondo,
+                ruta_salida_png=ruta_fondo_png,
+                vertical=vertical,
+                api_key_openai=self.entrada_openai.get().strip(),
+                api_key_fal=self.entrada_fal.get().strip(),
+                rutas_video_fallback=rutas_vid,
+                ruta_pc=self.ruta_fondo_pc_miniatura,
+            )
+            self.ruta_fondo_miniatura = ruta_fondo_png
+
+            self.mostrar_estado("✨ Aplicando Color Grading y Tipografía Viral Alto CTR...", "#FFD600")
+            ThumbnailStudioService.componer_miniatura_pro(
+                ruta_fondo=self.ruta_fondo_miniatura,
+                texto_l1=self.entrada_thumb_l1.get(),
+                texto_l2=self.entrada_thumb_l2.get(),
+                badge=self.entrada_thumb_badge.get(),
+                estilo_nombre=self.menu_thumb_estilo.get(),
+                posicion=self.menu_thumb_pos.get(),
+                vertical=vertical,
+                ruta_salida_jpg=ruta_final_jpg,
+            )
+            self.ruta_miniatura_final = ruta_final_jpg
+            self.after(0, self._mostrar_preview_miniatura)
+            self.mostrar_estado("🎉 ¡Miniatura irresistible lista y optimizada (< 2 MB) para YouTube!", "#00FF00")
+        except Exception as e:
+            logging.exception("Error generando miniatura")
+            self.mostrar_estado(f"❌ Error al crear miniatura: {e}", "red")
+        finally:
+            self.cambiar_estado_boton(self.btn_generar_thumb, "normal", "🎨 2. Crear Miniatura")
+
+    def actualizar_texto_miniatura_instantaneo(self, silencioso=False):
+        if not self.ruta_fondo_miniatura or not os.path.exists(self.ruta_fondo_miniatura):
+            if not silencioso:
+                self.mostrar_estado("⚠️ Primero genera una miniatura o carga un fondo desde PC.", "orange")
+            return
+        try:
+            os.makedirs(self.CARPETA_ASSETS, exist_ok=True)
+            ruta_final_jpg = os.path.join(self.CARPETA_ASSETS, "MINIATURA_FINAL.jpg")
+            ThumbnailStudioService.componer_miniatura_pro(
+                ruta_fondo=self.ruta_fondo_miniatura,
+                texto_l1=self.entrada_thumb_l1.get(),
+                texto_l2=self.entrada_thumb_l2.get(),
+                badge=self.entrada_thumb_badge.get(),
+                estilo_nombre=self.menu_thumb_estilo.get(),
+                posicion=self.menu_thumb_pos.get(),
+                vertical=self._es_miniatura_vertical(),
+                ruta_salida_jpg=ruta_final_jpg,
+            )
+            self.ruta_miniatura_final = ruta_final_jpg
+            self._mostrar_preview_miniatura()
+            if not silencioso:
+                self.mostrar_estado("🔄 Texto y estilo actualizados al instante.", "#00E5FF")
+        except Exception as e:
+            logging.exception("Error actualizando texto de miniatura")
+            if not silencioso:
+                self.mostrar_estado(f"❌ Error actualizando miniatura: {e}", "red")
+
+    def _mostrar_preview_miniatura(self):
+        if not self.ruta_miniatura_final or not os.path.exists(self.ruta_miniatura_final):
+            return
+        try:
+            img = PIL.Image.open(self.ruta_miniatura_final)
+            w_real, h_real = img.size
+            tam_kb = os.path.getsize(self.ruta_miniatura_final) / 1024.0
+            img_prev = img.copy()
+            img_prev.thumbnail((318, 195), PIL.Image.Resampling.LANCZOS)
+            self.foto_preview_miniatura = ctk.CTkImage(light_image=img_prev, dark_image=img_prev, size=img_prev.size)
+            self.lbl_preview_thumb.configure(image=self.foto_preview_miniatura, text="")
+            self.lbl_info_thumb.configure(
+                text=f"✅ {w_real}x{h_real} px | {tam_kb:.0f} KB (Lista para YouTube < 2 MB)",
+                text_color="#00E676",
+            )
+        except Exception:
+            logging.exception("Error mostrando preview de miniatura")
+
+    def guardar_copia_miniatura(self):
+        if not self.ruta_miniatura_final or not os.path.exists(self.ruta_miniatura_final):
+            self.mostrar_estado("❌ Primero crea una miniatura para poder guardarla.", "red")
+            return
+        destino = filedialog.asksaveasfilename(
+            title="Guardar Miniatura como JPG",
+            defaultextension=".jpg",
+            initialfile="miniatura_viral.jpg",
+            filetypes=[("Imagen JPG", "*.jpg *.jpeg"), ("Imagen PNG", "*.png")],
+        )
+        if destino:
+            if destino.lower().endswith(".png"):
+                PIL.Image.open(self.ruta_miniatura_final).save(destino, format="PNG")
+            else:
+                shutil.copy(self.ruta_miniatura_final, destino)
+            self.mostrar_estado(f"💾 Miniatura guardada en: {os.path.basename(destino)}", "#00FF00")
+
+    # ==========================================
     # PUBLICADOR YOUTUBE
     # ==========================================
     def cargar_video_proyecto(self):
         self.ruta_video_publicar = f"FINAL_{self.formato_actual}.mp4"
+        if hasattr(self, "menu_thumb_formato"):
+            if self.formato_actual == "SHORT":
+                self.menu_thumb_formato.set("9:16 Short/Reel (1080x1920)")
+            else:
+                self.menu_thumb_formato.set("16:9 YouTube (1280x720)")
+
         if os.path.exists(self.ruta_video_publicar):
             valido, msg = self.validar_archivo_video(self.ruta_video_publicar)
             if valido:
@@ -4899,6 +5834,7 @@ REGLAS DE ORO:
     def ejecutar_publicar_youtube(self):
         self.mostrar_estado("Conectando con YouTube... ¡Revisa tu navegador web!", "orange")
         self.cambiar_estado_boton(self.btn_publicar_yt, "disabled")
+        ruta_video_temporal_portada = None
         try:
             titulo = self.entrada_titulo_pub.get().strip()
             desc = self.caja_desc_pub.get("0.0", "end").strip()
@@ -4913,6 +5849,25 @@ REGLAS DE ORO:
 
             if not os.path.exists("client_secret.json"):
                 raise Exception("Falta el archivo 'client_secret.json' de Google Cloud.")
+
+            ruta_a_subir = self.ruta_video_publicar
+            tiene_miniatura = bool(self.ruta_miniatura_final and os.path.exists(self.ruta_miniatura_final))
+
+            # Si activó incrustar la miniatura en el fotograma inicial (ideal para Shorts/Reels)
+            if tiene_miniatura and hasattr(self, "switch_portada_short") and self.switch_portada_short.get() == 1:
+                self.mostrar_estado("📌 Incrustando tu miniatura en el fotograma inicial (0.14s)...", "yellow")
+                os.makedirs(self.CARPETA_ASSETS, exist_ok=True)
+                ruta_video_temporal_portada = os.path.join(self.CARPETA_ASSETS, "_temp_upload_con_portada.mp4")
+                ThumbnailStudioService.inyectar_portada_en_video(
+                    self.ruta_video_publicar,
+                    self.ruta_miniatura_final,
+                    ruta_video_temporal_portada,
+                    duracion_portada=0.14,
+                )
+                val_portada, msg_portada = self.validar_archivo_video(ruta_video_temporal_portada)
+                if not val_portada:
+                    raise Exception(f"Error preparando video con portada: {msg_portada}")
+                ruta_a_subir = ruta_video_temporal_portada
 
             scopes = ["https://www.googleapis.com/auth/youtube.upload"]
             creds = None
@@ -4946,7 +5901,7 @@ REGLAS DE ORO:
             # Subida en fragmentos (chunks de 2 MB) con reanudación y porcentaje en tiempo real
             chunk_size = 2 * 1024 * 1024
             media = MediaFileUpload(
-                self.ruta_video_publicar,
+                ruta_a_subir,
                 mimetype="video/mp4",
                 chunksize=chunk_size,
                 resumable=True,
@@ -4961,16 +5916,37 @@ REGLAS DE ORO:
                     self.mostrar_estado(f"📤 Subiendo video a YouTube: {pct}% completado...", "#00E5FF")
 
             video_id = response.get("id", "Desconocido")
+
+            # Subir la miniatura personalizada automáticamente vía API si existe
+            msg_thumb = ""
+            if tiene_miniatura and video_id != "Desconocido":
+                try:
+                    self.mostrar_estado("🖼️ Aplicando miniatura de alto CTR en YouTube...", "#00E5FF")
+                    media_thumb = MediaFileUpload(self.ruta_miniatura_final, mimetype="image/jpeg")
+                    youtube.thumbnails().set(videoId=video_id, media_body=media_thumb).execute()
+                    msg_thumb = "\n🖼️ Miniatura personalizada: ¡Aplicada en YouTube!"
+                except Exception as e_thumb:
+                    logging.warning("No se pudo aplicar miniatura vía thumbnails.set: %s", e_thumb)
+                    msg_thumb = (
+                        "\n⚠️ Nota sobre miniatura: YouTube requiere verificación telefónica del canal para "
+                        "miniaturas API (o si es Short, usa la portada incrustada en el primer fotograma)."
+                    )
+
             self.mostrar_estado(f"🎉 ¡ÉXITO! Video Publicado correctamente. ID: {video_id}", "#00FF00")
             messagebox.showinfo(
                 "Video Publicado",
-                f"¡Tu video fue subido exitosamente a YouTube!\n\nID del Video: {video_id}\nEstado: {self.menu_privacidad.get()}\n\nYouTube comenzará a procesarlo en HD sin errores.",
+                f"¡Tu video fue subido exitosamente a YouTube!\n\nID del Video: {video_id}\nEstado: {self.menu_privacidad.get()}{msg_thumb}",
             )
         except Exception as e:
             logging.exception("Error al Publicar")
             self.mostrar_estado(f"❌ Error al Publicar: {e}", "red")
             messagebox.showerror("Error al Publicar", f"No se pudo completar la subida:\n\n{e}")
         finally:
+            if ruta_video_temporal_portada and os.path.exists(ruta_video_temporal_portada):
+                try:
+                    os.remove(ruta_video_temporal_portada)
+                except Exception:
+                    pass
             self.cambiar_estado_boton(self.btn_publicar_yt, "normal")
 
     # ==========================================
